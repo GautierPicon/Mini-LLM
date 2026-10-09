@@ -1,0 +1,22 @@
+[project]
+name = "mini-llm"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+authors = [
+    { name = "GautierPicon", email = "bt2ay5d9@anonaddy.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "datasets>=5.1.0",
+    "numpy>=2.4.6",
+    "tokenizers>=0.23.3",
+    "torch>=2.14.1",
+]
+
+[project.scripts]
+mini-llm = "mini_llm:main"
+
+[build-system]
+requires = ["uv_build>=0.12.23,<0.13.0"]
+build-backend = "uv_build"
