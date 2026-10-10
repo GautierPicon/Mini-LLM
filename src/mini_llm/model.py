@@ -100,12 +100,14 @@ class LLM(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx, n=200, temp=0.8, top_k=50):
+    def generate(self, idx, n=200, temp=0.8, top_k=50, eos=None):
         for _ in range(n):
             logits, _ = self(idx[:, -self.c.ctx:])
             logits = logits[:, -1] / temp
             v, _ = torch.topk(logits, top_k)
             logits[logits < v[:, [-1]]] = -float("inf")
             nxt = torch.multinomial(F.softmax(logits, -1), 1)
+            if eos is not None and nxt.item() == eos:
+                break
             idx = torch.cat([idx, nxt], dim=1)
         return idx

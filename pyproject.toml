@@ -16,9 +16,10 @@ dependencies = [
 
 [project.scripts]
 prep = "mini_llm.prep:main"
-train = "mini_llm.train:main"
-gen = "mini_llm.gen:main"
- 
+pretrain = "mini_llm.pretrain:main"
+sft = "mini_llm.sft:main"
+chat = "mini_llm.chat:main"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

@@ -11,12 +11,12 @@ TOKENIZER_PATH = MODELS_DIR / "tok.json"
 
 @dataclass
 class Cfg:
-    vocab: int = 8192
+    vocab: int = 16384
     dim: int = 512
     layers: int = 8
     heads: int = 8
     ffn: int = 1408
-    ctx: int = 256
+    ctx: int = 512
 
 
 def get_device():

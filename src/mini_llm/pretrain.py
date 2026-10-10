@@ -11,11 +11,11 @@ from mini_llm.config import DATA_DIR, MODELS_DIR, Cfg, get_device
 from mini_llm.model import LLM
 
 
-def train(steps=5000):
+def pretrain(steps=5000):
     cfg = Cfg()
     dev = get_device()
     print("device:", dev)
-    batch, accum = (8, 8) if dev == "mps" else (32, 4)
+    batch, accum = (4, 8) if dev == "mps" else (32, 4)
     lr_max, lr_min, warmup = 5e-4, 5e-5, 200
 
     data = {
@@ -33,7 +33,7 @@ def train(steps=5000):
     model = LLM(cfg).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_path = MODELS_DIR / f"mini-llm-{n_params / 1e6:.0f}M-{steps}steps.pt"
+    ckpt_path = MODELS_DIR / f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps.pt"
     print(f"{n_params / 1e6:.1f}M paramètres -> {ckpt_path}")
 
     cmodel = torch.compile(model) if dev == "cuda" else model
@@ -81,7 +81,7 @@ def train(steps=5000):
 
 
 def main():
-    train(int(sys.argv[1]) if len(sys.argv) > 1 else 5000)
+    pretrain(int(sys.argv[1]) if len(sys.argv) > 1 else 5000)
 
 
 if __name__ == "__main__":
