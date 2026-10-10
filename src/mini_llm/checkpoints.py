@@ -12,7 +12,7 @@ def resolve_checkpoint(path=None, pattern="mini-llm-base-*.pt"):
     if path is None:
         files = list(MODELS_DIR.glob(pattern))
         if not files:
-            sys.exit(f"Aucun fichier {pattern} dans {MODELS_DIR}")
+            sys.exit(f"No file matching {pattern} in {MODELS_DIR}")
         return max(files, key=lambda f: f.stat().st_mtime)
     p = Path(path)
     return p if p.exists() else MODELS_DIR / path

@@ -34,7 +34,7 @@ def pretrain(steps=5000):
     n_params = sum(p.numel() for p in model.parameters())
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     ckpt_path = MODELS_DIR / f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps.pt"
-    print(f"{n_params / 1e6:.1f}M paramètres -> {ckpt_path}")
+    print(f"{n_params / 1e6:.1f}M parameters -> {ckpt_path}")
 
     cmodel = torch.compile(model) if dev == "cuda" else model
     opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.1)
@@ -68,7 +68,7 @@ def pretrain(steps=5000):
             loss.backward()
         gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         if not math.isfinite(loss.item()) or not math.isfinite(gnorm.item()):
-            print(f"!! valeur non finie au step {step} (loss={loss.item()}, gnorm={gnorm.item()}). Arrêt.")
+            print(f"!! non-finite value at step {step} (loss={loss.item()}, gnorm={gnorm.item()}). Stopping.")
             return
         opt.step()
         opt.zero_grad(set_to_none=True)

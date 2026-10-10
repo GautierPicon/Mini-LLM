@@ -34,7 +34,7 @@ def sft(epochs=3, base=None):
     eos = tok.token_to_id("<eos>")
 
     data = load_examples(tok, eos, cfg.ctx)
-    print(f"{len(data)} exemples")
+    print(f"{len(data)} examples")
 
     def make_batch(items):
         xs, ys = [], []
@@ -79,7 +79,7 @@ def sft(epochs=3, base=None):
                 step_loss += loss.item()
             gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             if not math.isfinite(step_loss) or not math.isfinite(gnorm.item()):
-                print(f"!! valeur non finie au step {step}. Arrêt.")
+                print(f"!! non-finite value at step {step}. Stopping.")
                 return
             opt.step()
             opt.zero_grad(set_to_none=True)
@@ -89,7 +89,7 @@ def sft(epochs=3, base=None):
                 print(f"epoch {ep + 1}/{epochs} | step {step:4d}/{total} | loss {step_loss:.3f} | {time.time() - t0:.0f}s")
             step += 1
         torch.save({"model": model.state_dict(), "cfg": asdict(cfg)}, out_path)
-        print(f">> epoch {ep + 1} terminé -> {out_path.name}")
+        print(f">> epoch {ep + 1} done -> {out_path.name}")
 
 
 def main():

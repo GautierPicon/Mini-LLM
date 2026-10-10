@@ -49,14 +49,14 @@ def prep(target_millions=120):
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
     if not TOKENIZER_PATH.exists():
-        print("Entraînement du tokenizer BPE...")
+        print("Training the BPE tokenizer...")
         train_tokenizer(cfg)
     tok = Tokenizer.from_file(str(TOKENIZER_PATH))
     eos = tok.token_to_id("<eos>")
 
     target = VAL_TOKENS + int(target_millions * 1_000_000)
     written = 0
-    print(f"Tokenisation de {DATASET} (objectif : {target / 1e6:.0f}M tokens)...")
+    print(f"Tokenizing {DATASET} (target: {target / 1e6:.0f}M tokens)...")
     with open(DATA_DIR / "val.bin", "wb") as val_f, open(DATA_DIR / "train.bin", "wb") as train_f:
         for texts in batches(stream(), BATCH):
             for enc in tok.encode_batch(texts):
@@ -66,7 +66,7 @@ def prep(target_millions=120):
             print(f"  {written / 1e6:.1f}M tokens", flush=True)
             if written >= target:
                 break
-    print("Terminé.")
+    print("Done.")
 
 
 def main():

@@ -19,19 +19,19 @@ def reply(model, tok, eos, dev, question):
 def chat(path=None):
     dev = get_device()
     path = resolve_checkpoint(path, pattern="mini-llm-assistant-*.pt")
-    print(f"[{path.name}] Ctrl+C pour quitter")
+    print(f"[{path.name}] Ctrl+C to quit")
     model, _ = load_model(path, dev)
     model.eval()
     tok = load_tokenizer(path)
     eos = tok.token_to_id("<eos>")
     while True:
         try:
-            question = input("\nToi > ")
+            question = input("\nYou > ")
         except (KeyboardInterrupt, EOFError):
             print()
             break
         if question.strip():
-            print("IA  >", reply(model, tok, eos, dev, question))
+            print("AI  >", reply(model, tok, eos, dev, question))
 
 
 def main():
