@@ -13,3 +13,4 @@ wheels/
 
 *.bin
 *.pt
+data/
