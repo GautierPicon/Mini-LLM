@@ -1,17 +1,20 @@
+import argparse
 import math
 import sys
 import time
 from contextlib import nullcontext
-from dataclasses import asdict
 
 import numpy as np
 import torch
 
+from mini_llm.checkpoints import read_checkpoint, save_checkpoint
 from mini_llm.config import DATA_DIR, MODELS_DIR, Cfg, get_device
 from mini_llm.model import LLM
 
+SAVE_EVERY = 500
 
-def pretrain(steps=5000):
+
+def pretrain(steps=5000, resume=False):
     cfg = Cfg()
     dev = get_device()
     print("device:", dev)
@@ -33,11 +36,28 @@ def pretrain(steps=5000):
     model = LLM(cfg).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    ckpt_path = MODELS_DIR / f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps.pt"
-    print(f"{n_params / 1e6:.1f}M parameters -> {ckpt_path}")
+    stem = f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps"
+    weights_path = MODELS_DIR / f"{stem}.pt"
+    state_path = MODELS_DIR / f"{stem}.state.pt"
+    print(f"{n_params / 1e6:.1f}M parameters -> {weights_path.name}")
+
+    opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.1)
+
+    start = 0
+    if resume:
+        if not state_path.exists():
+            sys.exit(f"Nothing to resume: {state_path.name} not found")
+        state = read_checkpoint(state_path, dev)
+        if state["total_steps"] != steps:
+            sys.exit(f"The saved run targets {state['total_steps']} steps, not {steps}")
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state["optimizer"])
+        start = state["step"]
+        print(f"resuming from step {start}")
+    elif weights_path.exists() or state_path.exists():
+        sys.exit(f"{stem} already exists. Use --resume to continue it, or delete its files to start over.")
 
     cmodel = torch.compile(model) if dev == "cuda" else model
-    opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.1)
     amp = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else nullcontext()
 
     def lr_at(s):
@@ -57,8 +77,9 @@ def pretrain(steps=5000):
         model.train()
         return sum(ls) / len(ls)
 
+    val_loss = None
     t0 = time.time()
-    for step in range(steps):
+    for step in range(start, steps):
         for g in opt.param_groups:
             g["lr"] = lr_at(step)
         for _ in range(accum):
@@ -69,19 +90,34 @@ def pretrain(steps=5000):
         gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         if not math.isfinite(loss.item()) or not math.isfinite(gnorm.item()):
             print(f"!! non-finite value at step {step} (loss={loss.item()}, gnorm={gnorm.item()}). Stopping.")
+            if state_path.exists():
+                print(f"Last saved state: {state_path.name} (continue with --resume).")
             return
         opt.step()
         opt.zero_grad(set_to_none=True)
 
         if step % 50 == 0:
             print(f"step {step:5d} | loss {loss.item() * accum:.3f} | gnorm {gnorm.item():.2f} | {time.time() - t0:.0f}s")
-        if (step > 0 and step % 500 == 0) or step == steps - 1:
-            print(f"  >> val loss {evaluate():.3f}")
-            torch.save({"model": model.state_dict(), "cfg": asdict(cfg)}, ckpt_path)
+        done = step + 1
+        if done % SAVE_EVERY == 0 or done == steps:
+            val_loss = evaluate()
+            print(f"  >> val loss {val_loss:.3f}")
+            save_checkpoint(
+                state_path, model, cfg,
+                kind="base", step=done, total_steps=steps, val_loss=val_loss,
+                optimizer=opt.state_dict(),
+            )
+
+    save_checkpoint(weights_path, model, cfg, kind="base", step=steps, total_steps=steps, val_loss=val_loss)
+    print(f"done -> {weights_path.name}")
 
 
 def main():
-    pretrain(int(sys.argv[1]) if len(sys.argv) > 1 else 5000)
+    ap = argparse.ArgumentParser()
+    ap.add_argument("steps", type=int, nargs="?", default=5000)
+    ap.add_argument("--resume", action="store_true")
+    args = ap.parse_args()
+    pretrain(args.steps, args.resume)
 
 
 if __name__ == "__main__":
