@@ -15,9 +15,12 @@ from mini_llm.checkpoints import (
     save_checkpoint,
 )
 from mini_llm.config import get_device
+from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import format_prompt
 
 VAL_SIZE = 500
+AI_MAX_SHARE = 0.25
+IDENTITY_REPEAT = 3
 
 
 def dolly_pairs():
@@ -37,7 +40,7 @@ def no_robots_pairs():
 
 
 def oasst_pairs():
-    ds = load_dataset("OpenAssistant/oasst1", split="train")
+    ds = load_dataset("OpenAssistant/oasst2", split="train")
     ds = [d for d in ds if d["lang"] == "en" and not d["deleted"] and d["review_result"]]
     prompts = {d["message_id"]: d["text"] for d in ds if d["role"] == "prompter" and d["parent_id"] is None}
     return [
@@ -47,23 +50,40 @@ def oasst_pairs():
     ]
 
 
-SOURCES = {"dolly": dolly_pairs, "no_robots": no_robots_pairs, "oasst1": oasst_pairs}
+def alpaca_pairs():
+    ds = load_dataset("yahma/alpaca-cleaned", split="train")
+    return [(d["instruction"], d["output"]) for d in ds if not d["input"].strip()]
+
+
+HUMAN_SOURCES = {"dolly": dolly_pairs, "no_robots": no_robots_pairs, "oasst2": oasst_pairs}
+AI_SOURCES = {"alpaca": alpaca_pairs}
+
+
+def encode_pairs(name, pairs, tok, eos, ctx):
+    pairs = [(q, a) for q, a in pairs if q.strip() and a.strip()]
+    prompts = tok.encode_batch([format_prompt(q) for q, _ in pairs])
+    answers = tok.encode_batch([" " + a.strip() for _, a in pairs])
+    kept = [
+        (p.ids, a.ids + [eos])
+        for p, a in zip(prompts, answers)
+        if len(p.ids) + len(a.ids) + 1 <= ctx
+    ]
+    print(f"{name}: {len(kept)}/{len(pairs)} examples kept")
+    return kept
 
 
 def load_examples(tok, eos, ctx):
-    data = []
-    for name, fn in SOURCES.items():
-        pairs = [(q, a) for q, a in fn() if q.strip() and a.strip()]
-        prompts = tok.encode_batch([format_prompt(q) for q, _ in pairs])
-        answers = tok.encode_batch([" " + a.strip() for _, a in pairs])
-        kept = [
-            (p.ids, a.ids + [eos])
-            for p, a in zip(prompts, answers)
-            if len(p.ids) + len(a.ids) + 1 <= ctx
-        ]
-        print(f"{name}: {len(kept)}/{len(pairs)} examples kept")
-        data.extend(kept)
-    return data
+    human = []
+    for name, fn in HUMAN_SOURCES.items():
+        human += encode_pairs(name, fn(), tok, eos, ctx)
+    ai = []
+    for name, fn in AI_SOURCES.items():
+        ai += encode_pairs(name, fn(), tok, eos, ctx)
+    cap = int(len(human) * AI_MAX_SHARE / (1 - AI_MAX_SHARE))
+    random.Random(0).shuffle(ai)
+    ai = ai[:cap]
+    print(f"AI-written examples used: {len(ai)} ({len(ai) / (len(human) + len(ai)):.0%} of the mix)")
+    return human + ai
 
 
 def sft(epochs=3, base=None, resume=False):
@@ -74,9 +94,17 @@ def sft(epochs=3, base=None, resume=False):
     tok = load_tokenizer(base)
     eos = tok.token_to_id("<eos>")
 
+    n_params = sum(p.numel() for p in model.parameters())
+
     data = load_examples(tok, eos, cfg.ctx)
     random.Random(0).shuffle(data)
     val, train = data[:VAL_SIZE], data[VAL_SIZE:]
+    extra = encode_pairs(
+        "identity and arithmetic",
+        identity_pairs(round(n_params / 1e6), repeat=IDENTITY_REPEAT) + arithmetic_pairs(),
+        tok, eos, cfg.ctx,
+    )
+    train = train + extra
     print(f"{len(train)} train examples, {len(val)} validation examples")
 
     def make_batch(items):
@@ -115,7 +143,6 @@ def sft(epochs=3, base=None, resume=False):
             torch.mps.empty_cache()
         return sum(losses) / len(losses)
 
-    n_params = sum(p.numel() for p in model.parameters())
     out_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.pt"
     state_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.state.pt"
 
