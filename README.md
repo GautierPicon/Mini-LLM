@@ -1,30 +1,30 @@
-# Mini-LLM
+# mini-llm
 
-A small ~34M-parameter assistant, trained **entirely from scratch** with PyTorch: no pre-trained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pre-training, fine-tuning into an assistant, and chat.
+A small ~34M-parameter assistant trained **entirely from scratch** with PyTorch: no pretrained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pretraining, supervised fine-tuning into an assistant, and chat.
 
-It is designed to run on an Apple Silicon Mac (GPU via MPS), and most likely also works on an NVIDIA GPU (CUDA) or on CPU (very slow).
+Built for Apple Silicon Macs (GPU through MPS). It also runs on NVIDIA GPUs (CUDA) and on CPU (very slow).
 
-> This is a learning project. With 34M parameters and ~100M tokens, the assistant writes coherent sentences and responds in the correct format, but it is often factually wrong.
+> With 34M parameters and ~100M training tokens, the assistant writes coherent sentences in the right format, but it often gets facts wrong.
 
-## The model
+## Model
 
-A Llama-style decoder: RMSNorm, RoPE (rotary positional embeddings), causal attention, SwiGLU FFN, embedding weights tied with the output head.
+Llama-style decoder: RMSNorm, RoPE (rotary position embeddings), causal attention, SwiGLU feed-forward, and an embedding matrix shared with the output head.
 
-| Setting                    | Value      |
-| -------------------------- | ---------- |
-| Parameters                 | ~34M       |
-| `dim` (width)              | 512        |
-| `layers` (depth)           | 8          |
-| `heads` (attention heads)  | 8          |
-| `ffn` (FFN size)           | 1408       |
-| Vocabulary (BPE)           | 16 384     |
-| Context                    | 512 tokens |
+| Setting                   | Value      |
+| ------------------------- | ---------- |
+| Parameters                | ~34M       |
+| `dim` (width)             | 512        |
+| `layers` (depth)          | 8          |
+| `heads` (attention heads) | 8          |
+| `ffn` (feed-forward size) | 1408       |
+| Vocabulary (BPE)          | 16,384     |
+| Context length            | 512 tokens |
 
-Everything lives in `Cfg`, in `src/mini_llm/config.py`. Changing these values changes the model size.
+Everything lives in `Cfg`, in `src/mini_llm/config.py`.
 
-## Installation
+## Setup
 
-Prerequisites: [uv](https://docs.astral.sh/uv/) and Python 3.11+.
+Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```
 git clone https://github.com/GautierPicon/Mini-LLM
@@ -34,7 +34,7 @@ uv sync
 
 ## Usage
 
-The pipeline runs in 4 steps, in this order.
+The pipeline has four steps, run in this order.
 
 ```
 uv run prep
@@ -43,56 +43,81 @@ caffeinate -i uv run sft 3
 uv run chat
 ```
 
-| Command                          | Role                                                            | Approx. duration (MacBook Air M2) |
-| -------------------------------- | --------------------------------------------------------------- | ---------------------------------- |
-| `uv run prep`                    | Trains the tokenizer and prepares ~120M FineWeb-Edu tokens      | 15 to 30 min                       |
-| `uv run pretrain [steps]`        | Pre-training: the model learns to predict the next token        | ~3.3 s per step (6000 steps ≈ 5 h 30) |
-| `uv run sft [epochs] [checkpoint]` | Supervised fine-tuning on question/answer pairs                | ~13 min per epoch                  |
-| `uv run chat [checkpoint]`       | Chat with the assistant (Ctrl+C to quit)                        |                                    |
+| Command                                 | What it does                                                   | Rough duration (MacBook Air M2)       |
+| --------------------------------------- | -------------------------------------------------------------- | ------------------------------------- |
+| `uv run prep [millions]`                | Trains the tokenizer and tokenizes ~120M tokens of FineWeb-Edu | 15 to 30 min                          |
+| `uv run pretrain [steps] [--resume]`    | Pretraining: learn to predict the next token                   | ~3.3 s per step (6000 steps ≈ 5 h 30) |
+| `uv run sft [epochs] [base] [--resume]` | Supervised fine-tuning on question/answer pairs                | ~25 min per epoch                     |
+| `uv run chat [checkpoint]`              | Chat with the assistant (Ctrl+C to quit)                       |                                       |
 
-`caffeinate -i` (macOS) prevents the Mac from going to sleep during training. Keep it plugged into power.
+`caffeinate -i` (macOS) keeps the Mac awake during training. Keep it plugged in.
 
-To quickly check that everything works before a long run: `uv run pretrain 300`, then `uv run sft 1`.
+To check that everything works before a long run: `uv run pretrain 300`, then `uv run sft 1`.
 
-## Project structure
+### Resuming a run
+
+`pretrain` saves its full state (weights, optimizer, step) every 500 steps, and `sft` does it after every epoch. If a run stops, continue it with the same arguments plus `--resume`:
+
+```
+uv run pretrain 6000 --resume
+uv run sft 3 --resume
+```
+
+The number of steps (or epochs) must match the original run, since the learning-rate schedule depends on it. Starting a `pretrain` run whose output already exists is refused, so a finished model is never overwritten by accident.
+
+## Project layout
 
 ```
 mini-llm/
 ├── pyproject.toml
 ├── data/                  train.bin, val.bin (tokens, generated by prep)
-├── models/                tok.json + .pt checkpoints
+├── models/                tok.json + checkpoints (.pt)
 └── src/
     └── mini_llm/
         ├── config.py      model configuration, paths, device selection
-        ├── model.py       model architecture and generation
-        ├── prep.py        tokenizer + data preparation
-        ├── pretrain.py    pre-training
-        ├── sft.py         assistant fine-tuning
+        ├── model.py       architecture and text generation
+        ├── prompt.py      conversation format shared by sft and chat
+        ├── prep.py        tokenizer and data preparation
+        ├── pretrain.py    pretraining
+        ├── sft.py         fine-tuning into an assistant
         ├── chat.py        chat interface
-        └── checkpoints.py model and tokenizer loading
+        └── checkpoints.py saving, loading and selecting checkpoints
 ```
 
-### Generated files
+## Checkpoints
 
-| File                                     | Content                                                |
-| ---------------------------------------- | ------------------------------------------------------ |
-| `models/tok.json`                        | The tokenizer (16,384-token vocabulary)                |
-| `data/train.bin`, `data/val.bin`         | The training data, already converted to tokens         |
-| `models/mini-llm-base-34M-<steps>steps.pt` | Base model after pre-training                        |
-| `models/mini-llm-assistant-34M.pt`       | Final assistant after SFT                              |
+| File                                             | Content                                                    |
+| ------------------------------------------------ | ---------------------------------------------------------- |
+| `models/tok.json`                                | The tokenizer (16,384 tokens)                              |
+| `models/mini-llm-base-34M-<steps>steps.pt`       | Base model, written once pretraining is complete           |
+| `models/mini-llm-base-34M-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps |
+| `models/mini-llm-assistant-34M.pt`               | Best assistant so far, by validation loss                  |
+| `models/mini-llm-assistant-34M.state.pt`         | Resume state of the SFT run                                |
+| `data/train.bin`, `data/val.bin`                 | Training data, already converted to tokens                 |
 
-Each checkpoint stores its own configuration. The tokenizer always used is the one located in the same folder as the checkpoint, which makes it possible to archive old models in a subfolder along with their `tok.json`.
+Every checkpoint stores its weights, its configuration and metadata (`step`, `total_steps`, `val_loss`).
+
+How checkpoints are chosen when no path is given:
+
+- `sft` picks the base model with the highest step count in its file name, then the most recent file. A quick 300-step test therefore never takes priority over a 6000-step model. `.state.pt` files are never selected automatically.
+- `chat` does the same among the assistant files.
+- A path can always be passed explicitly, either absolute or relative to `models/`.
+
+The tokenizer is always read from the folder that contains the checkpoint, so older models can be archived in a subfolder together with their own `tok.json`.
 
 ## Data
 
-- **Pre-training**: [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (`sample-10BT` subset, downloaded in streaming mode), educational web pages written by humans.
-- **SFT**: [databricks-dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k), questions/answers written by Databricks employees. Only examples without additional context are kept (~10,000).
+- **Pretraining**: [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (`sample-10BT` subset, streamed), educational web pages written by humans.
+- **SFT**, all written by humans:
+  - [databricks-dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k): questions and answers written by Databricks employees (examples without extra context only).
+  - [No Robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots): 10,000 instructions written by professional annotators.
+  - [OpenAssistant oasst1](https://huggingface.co/datasets/OpenAssistant/oasst1): volunteer-written conversations. Only English, first turns, and the top-ranked answer to each prompt are kept.
 
-Conversation format learned during SFT:
+Examples that do not fit in the context window are dropped, and 500 examples are held out for validation. The conversation format is:
 
 ```
 User: <question>
 Assistant: <answer>
 ```
 
-The SFT loss is computed only on the answer, not on the question.
+The SFT loss is computed on the answer only, not on the question.
