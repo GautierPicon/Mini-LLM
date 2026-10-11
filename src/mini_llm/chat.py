@@ -4,10 +4,7 @@ import torch
 
 from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
 from mini_llm.config import get_device
-
-
-def format_prompt(question):
-    return f"User: {question.strip()}\nAssistant:"
+from mini_llm.prompt import format_prompt
 
 
 def reply(model, tok, eos, dev, question):
