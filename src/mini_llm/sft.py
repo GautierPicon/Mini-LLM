@@ -1,31 +1,72 @@
+import argparse
 import math
 import random
 import sys
 import time
-from dataclasses import asdict
 
 import torch
 from datasets import load_dataset
 
-from mini_llm.chat import format_prompt
-from mini_llm.checkpoints import load_model, load_tokenizer, resolve_checkpoint
+from mini_llm.checkpoints import (
+    load_model,
+    load_tokenizer,
+    read_checkpoint,
+    resolve_checkpoint,
+    save_checkpoint,
+)
 from mini_llm.config import get_device
+from mini_llm.prompt import format_prompt
+
+VAL_SIZE = 500
+
+
+def dolly_pairs():
+    ds = load_dataset("databricks/databricks-dolly-15k", split="train")
+    return [(d["instruction"], d["response"]) for d in ds if not d["context"].strip()]
+
+
+def no_robots_pairs():
+    ds = load_dataset("HuggingFaceH4/no_robots")
+    split = "train_sft" if "train_sft" in ds else "train"
+    pairs = []
+    for d in ds[split]:
+        msgs = [m for m in d["messages"] if m["role"] != "system"]
+        if len(msgs) >= 2 and msgs[0]["role"] == "user" and msgs[1]["role"] == "assistant":
+            pairs.append((msgs[0]["content"], msgs[1]["content"]))
+    return pairs
+
+
+def oasst_pairs():
+    ds = load_dataset("OpenAssistant/oasst1", split="train")
+    ds = [d for d in ds if d["lang"] == "en" and not d["deleted"] and d["review_result"]]
+    prompts = {d["message_id"]: d["text"] for d in ds if d["role"] == "prompter" and d["parent_id"] is None}
+    return [
+        (prompts[d["parent_id"]], d["text"])
+        for d in ds
+        if d["role"] == "assistant" and d["rank"] == 0 and d["parent_id"] in prompts
+    ]
+
+
+SOURCES = {"dolly": dolly_pairs, "no_robots": no_robots_pairs, "oasst1": oasst_pairs}
 
 
 def load_examples(tok, eos, ctx):
-    ds = load_dataset("databricks/databricks-dolly-15k", split="train")
-    rows = [d for d in ds if not d["context"].strip()]
-    prompts = tok.encode_batch([format_prompt(d["instruction"]) for d in rows])
-    answers = tok.encode_batch([" " + d["response"].strip() for d in rows])
     data = []
-    for p, a in zip(prompts, answers):
-        p_ids, a_ids = p.ids, a.ids + [eos]
-        if len(p_ids) + len(a_ids) <= ctx:
-            data.append((p_ids, a_ids))
+    for name, fn in SOURCES.items():
+        pairs = [(q, a) for q, a in fn() if q.strip() and a.strip()]
+        prompts = tok.encode_batch([format_prompt(q) for q, _ in pairs])
+        answers = tok.encode_batch([" " + a.strip() for _, a in pairs])
+        kept = [
+            (p.ids, a.ids + [eos])
+            for p, a in zip(prompts, answers)
+            if len(p.ids) + len(a.ids) + 1 <= ctx
+        ]
+        print(f"{name}: {len(kept)}/{len(pairs)} examples kept")
+        data.extend(kept)
     return data
 
 
-def sft(epochs=3, base=None):
+def sft(epochs=3, base=None, resume=False):
     dev = get_device()
     base = resolve_checkpoint(base)
     print(f"base: {base.name} | device: {dev}")
@@ -34,7 +75,9 @@ def sft(epochs=3, base=None):
     eos = tok.token_to_id("<eos>")
 
     data = load_examples(tok, eos, cfg.ctx)
-    print(f"{len(data)} examples")
+    random.Random(0).shuffle(data)
+    val, train = data[:VAL_SIZE], data[VAL_SIZE:]
+    print(f"{len(train)} train examples, {len(val)} validation examples")
 
     def make_batch(items):
         xs, ys = [], []
@@ -49,7 +92,7 @@ def sft(epochs=3, base=None):
         return x.to(dev), y.to(dev)
 
     bs, accum = 2, 8
-    per_epoch = len(data) // (bs * accum)
+    per_epoch = len(train) // (bs * accum)
     total = per_epoch * epochs
     lr_max, lr_min, warmup = 2e-4, 2e-5, 50
     opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.01)
@@ -60,20 +103,48 @@ def sft(epochs=3, base=None):
         p = (s - warmup) / max(1, total - warmup)
         return lr_min + 0.5 * (lr_max - lr_min) * (1 + math.cos(math.pi * p))
 
+    @torch.no_grad()
+    def evaluate():
+        model.eval()
+        losses = []
+        for k in range(0, len(val), bs):
+            x, y = make_batch(val[k : k + bs])
+            losses.append(model(x, y)[1].item())
+        model.train()
+        if dev == "mps":
+            torch.mps.empty_cache()
+        return sum(losses) / len(losses)
+
     n_params = sum(p.numel() for p in model.parameters())
     out_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.pt"
+    state_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.state.pt"
+
+    best = float("inf")
+    step, start_epoch = 0, 0
+    if resume:
+        if not state_path.exists():
+            sys.exit(f"Nothing to resume: {state_path.name} not found")
+        state = read_checkpoint(state_path, dev)
+        if state["total_steps"] != total:
+            sys.exit(f"The saved run targets {state['total_steps']} steps, not {total}")
+        model.load_state_dict(state["model"])
+        opt.load_state_dict(state["optimizer"])
+        step, start_epoch, best = state["step"], state["epoch"], state["best_val"]
+        print(f"resuming after epoch {start_epoch} (step {step})")
+    elif out_path.exists():
+        print(f"note: {out_path.name} will be overwritten")
 
     model.train()
-    step, t0 = 0, time.time()
-    for ep in range(epochs):
-        random.shuffle(data)
+    t0 = time.time()
+    for ep in range(start_epoch, epochs):
+        random.shuffle(train)
         for i in range(per_epoch):
             for g in opt.param_groups:
                 g["lr"] = lr_at(step)
             step_loss = 0.0
             for j in range(accum):
                 k = (i * accum + j) * bs
-                x, y = make_batch(data[k : k + bs])
+                x, y = make_batch(train[k : k + bs])
                 loss = model(x, y)[1] / accum
                 loss.backward()
                 step_loss += loss.item()
@@ -88,15 +159,29 @@ def sft(epochs=3, base=None):
             if step % 25 == 0:
                 print(f"epoch {ep + 1}/{epochs} | step {step:4d}/{total} | loss {step_loss:.3f} | {time.time() - t0:.0f}s")
             step += 1
-        torch.save({"model": model.state_dict(), "cfg": asdict(cfg)}, out_path)
-        print(f">> epoch {ep + 1} done -> {out_path.name}")
+        val_loss = evaluate()
+        print(f">> epoch {ep + 1} done | val loss {val_loss:.3f}")
+        if val_loss < best:
+            best = val_loss
+            save_checkpoint(
+                out_path, model, cfg,
+                kind="assistant", step=step, epoch=ep + 1, total_steps=total, val_loss=val_loss,
+            )
+            print(f"   best so far, saved -> {out_path.name}")
+        save_checkpoint(
+            state_path, model, cfg,
+            kind="assistant", step=step, epoch=ep + 1, total_steps=total,
+            val_loss=val_loss, best_val=best, optimizer=opt.state_dict(),
+        )
 
 
 def main():
-    sft(
-        int(sys.argv[1]) if len(sys.argv) > 1 else 3,
-        sys.argv[2] if len(sys.argv) > 2 else None,
-    )
+    ap = argparse.ArgumentParser()
+    ap.add_argument("epochs", type=int, nargs="?", default=3)
+    ap.add_argument("base", nargs="?")
+    ap.add_argument("--resume", action="store_true")
+    args = ap.parse_args()
+    sft(args.epochs, args.base, args.resume)
 
 
 if __name__ == "__main__":
