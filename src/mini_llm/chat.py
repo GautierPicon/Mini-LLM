@@ -7,9 +7,17 @@ from mini_llm.config import get_device
 from mini_llm.prompt import format_prompt
 
 
+TEMPERATURE = 0.5
+TOP_K = 40
+REPETITION_PENALTY = 1.15
+MAX_NEW_TOKENS = 256
+
+
 def reply(model, tok, eos, dev, question):
     ids = torch.tensor([tok.encode(format_prompt(question)).ids], device=dev)
-    out = model.generate(ids, n=200, temp=0.7, top_k=40, eos=eos)
+    out = model.generate(
+        ids, n=MAX_NEW_TOKENS, temp=TEMPERATURE, top_k=TOP_K, eos=eos, rep_penalty=REPETITION_PENALTY
+    )
     return tok.decode(out[0, ids.size(1):].tolist()).strip()
 
 

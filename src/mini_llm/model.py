@@ -100,10 +100,15 @@ class LLM(nn.Module):
         return logits, loss
 
     @torch.no_grad()
-    def generate(self, idx, n=200, temp=0.8, top_k=50, eos=None):
+    def generate(self, idx, n=200, temp=0.8, top_k=50, eos=None, rep_penalty=1.0):
         for _ in range(n):
             logits, _ = self(idx[:, -self.c.ctx:])
-            logits = logits[:, -1] / temp
+            logits = logits[:, -1]
+            if rep_penalty != 1.0:
+                seen = logits.gather(1, idx)
+                seen = torch.where(seen < 0, seen * rep_penalty, seen / rep_penalty)
+                logits = logits.scatter(1, idx, seen)
+            logits = logits / temp
             v, _ = torch.topk(logits, top_k)
             logits[logits < v[:, [-1]]] = -float("inf")
             nxt = torch.multinomial(F.softmax(logits, -1), 1)
