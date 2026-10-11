@@ -1,4 +1,4 @@
-# mini-llm
+# Mini-LLM
 
 A small ~34M-parameter assistant trained **entirely from scratch** with PyTorch: no pretrained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pretraining, supervised fine-tuning into an assistant, and chat.
 
@@ -43,12 +43,12 @@ caffeinate -i uv run sft 3
 uv run chat
 ```
 
-| Command                                 | What it does                                                   | Rough duration (MacBook Air M2)       |
-| --------------------------------------- | -------------------------------------------------------------- | ------------------------------------- |
-| `uv run prep [millions]`                | Trains the tokenizer and tokenizes ~120M tokens of FineWeb-Edu | 15 to 30 min                          |
-| `uv run pretrain [steps] [--resume]`    | Pretraining: learn to predict the next token                   | ~3.3 s per step (6000 steps ≈ 5 h 30) |
-| `uv run sft [epochs] [base] [--resume]` | Supervised fine-tuning on question/answer pairs                | ~25 min per epoch                     |
-| `uv run chat [checkpoint]`              | Chat with the assistant (Ctrl+C to quit)                       |                                       |
+| Command                                                  | What it does                                                                  | Rough duration (MacBook Air M2)       |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------- |
+| `uv run prep [millions]`                                 | Trains the tokenizer (if missing) and tokenizes a FineWeb-Edu + Wikipedia mix | 15 to 60 min                          |
+| `uv run pretrain [steps] [--resume] [--init checkpoint]` | Pretraining: learn to predict the next token                                  | ~3.3 s per step (6000 steps ≈ 5 h 30) |
+| `uv run sft [epochs] [base] [--resume]`                  | Supervised fine-tuning on question/answer pairs                               | ~25 min per epoch                     |
+| `uv run chat [checkpoint]`                               | Chat with the assistant (Ctrl+C to quit)                                      |                                       |
 
 `caffeinate -i` (macOS) keeps the Mac awake during training. Keep it plugged in.
 
@@ -65,6 +65,20 @@ uv run sft 3 --resume
 
 The number of steps (or epochs) must match the original run, since the learning-rate schedule depends on it. Starting a `pretrain` run whose output already exists is refused, so a finished model is never overwritten by accident.
 
+### Training on more data
+
+A finished base model can be trained further on fresh data instead of starting over. `prep` keeps the existing `tok.json` and rewrites `data/` with a new random sample of the sources, then `--init` loads the weights of a finished model and runs more steps on it:
+
+```
+uv run prep 250
+caffeinate -i uv run pretrain 12000 --init mini-llm-base-34M-6000steps.pt
+caffeinate -i uv run sft 3
+```
+
+`12000` is the final step count, so this adds 6000 steps. The continued phase uses its own short warmup and a lower peak learning rate (3e-4), and the optimizer starts fresh. The result is saved as `mini-llm-base-34M-12000steps.pt`, which `sft` and `chat` then prefer over the 6000-step model. `--init` and `--resume` cannot be combined, and `--resume` works on a continued run like on any other.
+
+Because the data mix changes, `val.bin` changes too: validation losses from before and after are not directly comparable.
+
 ## Project layout
 
 ```
@@ -77,6 +91,7 @@ mini-llm/
         ├── config.py      model configuration, paths, device selection
         ├── model.py       architecture and text generation
         ├── prompt.py      conversation format shared by sft and chat
+        ├── identity.py    identity, small-talk and arithmetic examples for sft
         ├── prep.py        tokenizer and data preparation
         ├── pretrain.py    pretraining
         ├── sft.py         fine-tuning into an assistant
@@ -107,11 +122,18 @@ The tokenizer is always read from the folder that contains the checkpoint, so ol
 
 ## Data
 
-- **Pretraining**: [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (`sample-10BT` subset, streamed), educational web pages written by humans.
-- **SFT**, all written by humans:
-  - [databricks-dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k): questions and answers written by Databricks employees (examples without extra context only).
-  - [No Robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots): 10,000 instructions written by professional annotators.
-  - [OpenAssistant oasst1](https://huggingface.co/datasets/OpenAssistant/oasst1): volunteer-written conversations. Only English, first turns, and the top-ranked answer to each prompt are kept.
+**Pretraining** (streamed and shuffled, ~70/30 by document count):
+
+- [FineWeb-Edu](https://huggingface.co/datasets/HuggingFaceFW/fineweb-edu) (`sample-10BT`): educational web pages written by humans.
+- [Wikipedia](https://huggingface.co/datasets/wikimedia/wikipedia) (`20231101.en`): encyclopedia articles written by humans, for factual knowledge.
+
+**SFT**, mostly written by humans:
+
+- [databricks-dolly-15k](https://huggingface.co/datasets/databricks/databricks-dolly-15k): questions and answers written by Databricks employees (examples without extra context only).
+- [No Robots](https://huggingface.co/datasets/HuggingFaceH4/no_robots): 10,000 instructions written by professional annotators, including chat-style prompts.
+- [OpenAssistant oasst2](https://huggingface.co/datasets/OpenAssistant/oasst2): volunteer-written conversations. Only English, first turns, and the top-ranked answer to each prompt are kept.
+- [alpaca-cleaned](https://huggingface.co/datasets/yahma/alpaca-cleaned): **AI-written** (generated with an OpenAI model). It adds short, simple answers, but it is capped so that it never exceeds 25% of the mix (`AI_MAX_SHARE` in `sft.py`); human data always dominates.
+- `identity.py`: examples written for this project (who the assistant is, greetings, thanks, how it handles "test", its limits) repeated three times, plus 200 generated arithmetic examples (sums, differences and times tables with correct answers). They are only added to the training split.
 
 Examples that do not fit in the context window are dropped, and 500 examples are held out for validation. The conversation format is:
 
@@ -121,3 +143,31 @@ Assistant: <answer>
 ```
 
 The SFT loss is computed on the answer only, not on the question.
+
+## Generation settings
+
+`chat.py` samples with a low temperature (0.5), `top_k` 40 and a repetition penalty of 1.15, and stops at the end-of-answer token or after 256 new tokens. The constants at the top of the file can be tuned without retraining anything: a higher temperature makes answers more varied and less reliable, a higher penalty reduces loops but can distort names and numbers.
+
+## Memory settings
+
+If training stops with an `out of memory` error on a Mac:
+
+- `pretrain.py`: change `(4, 8)` to `(2, 16)` in `batch, accum = ...`.
+- `sft.py`: change `bs, accum = 2, 8` to `1, 16`.
+
+The number of examples per optimizer step stays the same, only the memory used at any moment goes down. Closing heavy applications also helps.
+
+To speed up Hugging Face downloads, create a free token and export it before running `prep` or `sft`: `export HF_TOKEN=...`.
+
+## Design notes
+
+Things to keep in mind when changing the code:
+
+- Token ids are stored as `uint16` in the `.bin` files, so `Cfg.vocab` must stay at or below 65,536. Changing `vocab` invalidates `tok.json` and the data: delete them and run `prep` again.
+- The prompt format is defined once, in `prompt.py`. Changing it changes the behaviour of every model already trained with it.
+- Checkpoints store the configuration as a plain dictionary. Adding a field with a default value to `Cfg` keeps old checkpoints loadable; renaming or removing a field does not.
+- Checkpoints are loaded with `weights_only=True`. Only legacy checkpoints that pickled the `Cfg` object itself fall back to unrestricted loading. Never load a `.pt` file from an untrusted source.
+- `prep.py` ends with `os._exit(0)` on purpose: the Hugging Face streaming workers can keep the interpreter from exiting after the data is written. The files are already closed at that point.
+- SFT masks the prompt (labels set to `-100`) and pads with the `<eos>` id, because the tokenizer only defines `<eos>` as a special token. Padded positions carry no loss.
+- `*.pt`, `*.bin` and `data/` are ignored by Git, and `models/tok.json` is tracked. Do not `git add -f` model files.
+
