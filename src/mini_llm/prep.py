@@ -1,4 +1,5 @@
 import os
+import random
 import sys
 
 import numpy as np
@@ -7,21 +8,40 @@ from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, Cfg
 
-DATASET = "HuggingFaceFW/fineweb-edu"
-SUBSET = "sample-10BT"
+SOURCES = [
+    ("HuggingFaceFW/fineweb-edu", "sample-10BT", 0.7),
+    ("wikimedia/wikipedia", "20231101.en", 0.3),
+]
+SEED = 1
 TOKENIZER_DOCS = 30_000
 VAL_TOKENS = 1_000_000
 BATCH = 1_000
 
 
-def stream():
-    return load_dataset(DATASET, name=SUBSET, split="train", streaming=True)
+def texts():
+    rng = random.Random(SEED)
+    streams = [
+        iter(
+            load_dataset(name, subset, split="train", streaming=True).shuffle(
+                seed=SEED, buffer_size=10_000
+            )
+        )
+        for name, subset, _ in SOURCES
+    ]
+    weights = [w for _, _, w in SOURCES]
+    while streams:
+        i = rng.choices(range(len(streams)), weights=weights)[0]
+        try:
+            yield next(streams[i])["text"]
+        except StopIteration:
+            del streams[i]
+            del weights[i]
 
 
-def batches(rows, size):
+def batches(items, size):
     buf = []
-    for row in rows:
-        buf.append(row["text"])
+    for item in items:
+        buf.append(item)
         if len(buf) == size:
             yield buf
             buf = []
@@ -38,7 +58,7 @@ def train_tokenizer(cfg):
         special_tokens=["<eos>"],
         initial_alphabet=pre_tokenizers.ByteLevel.alphabet(),
     )
-    docs = (row["text"] for _, row in zip(range(TOKENIZER_DOCS), stream()))
+    docs = (text for _, text in zip(range(TOKENIZER_DOCS), texts()))
     tok.train_from_iterator(docs, trainer)
     tok.save(str(TOKENIZER_PATH))
 
@@ -56,10 +76,11 @@ def prep(target_millions=120):
 
     target = VAL_TOKENS + int(target_millions * 1_000_000)
     written = 0
-    print(f"Tokenizing {DATASET} (target: {target / 1e6:.0f}M tokens)...")
+    names = ", ".join(f"{name} ({w:.0%})" for name, _, w in SOURCES)
+    print(f"Tokenizing {names} (target: {target / 1e6:.0f}M tokens)...")
     with open(DATA_DIR / "val.bin", "wb") as val_f, open(DATA_DIR / "train.bin", "wb") as train_f:
-        for texts in batches(stream(), BATCH):
-            for enc in tok.encode_batch(texts):
+        for batch in batches(texts(), BATCH):
+            for enc in tok.encode_batch(batch):
                 arr = np.array(enc.ids + [eos], dtype=np.uint16)
                 arr.tofile(val_f if written < VAL_TOKENS else train_f)
                 written += len(arr)
