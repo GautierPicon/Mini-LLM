@@ -90,20 +90,28 @@ def identity_pairs(params_m, repeat=3, seed=0):
     return pairs
 
 
+ADD = ["What is {a} + {b}?", "what is {a} + {b}", "what's {a}+{b}", "{a} + {b}", "How much is {a} plus {b}?"]
+SUB = ["What is {a} - {b}?", "what is {a} - {b}", "what's {a}-{b}", "{a} - {b}", "How much is {a} minus {b}?"]
+MUL = ["What is {a} * {b}?", "what is {a} x {b}", "what's {a}x{b}", "{a} x {b}", "How much is {a} times {b}?"]
+
+
+def pick(templates, rng):
+    return [templates[0], templates[2], rng.choice([templates[1], templates[3], templates[4]])]
+
+
 def arithmetic_pairs(seed=0):
     rng = random.Random(seed)
     pairs = []
-    for _ in range(100):
-        a, b = rng.randint(0, 20), rng.randint(0, 20)
-        q = rng.choice([f"What is {a} + {b}?", f"{a} + {b}", f"How much is {a} plus {b}?"])
-        pairs.append((q, f"{a} + {b} = {a + b}."))
-    for _ in range(50):
-        a = rng.randint(0, 20)
-        b = rng.randint(0, a)
-        q = rng.choice([f"What is {a} - {b}?", f"{a} - {b}", f"How much is {a} minus {b}?"])
-        pairs.append((q, f"{a} - {b} = {a - b}."))
-    for _ in range(50):
-        a, b = rng.randint(1, 10), rng.randint(1, 10)
-        q = rng.choice([f"What is {a} * {b}?", f"{a} x {b}", f"How much is {a} times {b}?"])
-        pairs.append((q, f"{a} x {b} = {a * b}."))
+    for a in range(0, 11):
+        for b in range(0, 11):
+            for t in pick(ADD, rng):
+                pairs.append((t.format(a=a, b=b), f"{a} + {b} = {a + b}."))
+    for a in range(0, 11):
+        for b in range(0, a + 1):
+            for t in pick(SUB, rng):
+                pairs.append((t.format(a=a, b=b), f"{a} - {b} = {a - b}."))
+    for a in range(1, 11):
+        for b in range(1, 11):
+            for t in pick(MUL, rng):
+                pairs.append((t.format(a=a, b=b), f"{a} x {b} = {a * b}."))
     return pairs

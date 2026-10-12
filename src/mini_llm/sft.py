@@ -1,6 +1,7 @@
 import argparse
 import math
 import random
+import re
 import sys
 import time
 
@@ -20,7 +21,13 @@ from mini_llm.prompt import format_prompt
 
 VAL_SIZE = 500
 AI_MAX_SHARE = 0.25
-IDENTITY_REPEAT = 3
+IDENTITY_REPEAT = 5
+IDENTITY_LEAK = re.compile(
+    r"open ?assistant|\blaion\b|chat ?gpt|openai"
+    r"|as an ai( language)? model"
+    r"|i('m| am) (an? )?(ai|artificial intelligence|language model|large language model|virtual assistant)",
+    re.IGNORECASE,
+)
 
 
 def dolly_pairs():
@@ -59,8 +66,12 @@ HUMAN_SOURCES = {"dolly": dolly_pairs, "no_robots": no_robots_pairs, "oasst2": o
 AI_SOURCES = {"alpaca": alpaca_pairs}
 
 
-def encode_pairs(name, pairs, tok, eos, ctx):
+def encode_pairs(name, pairs, tok, eos, ctx, clean=True):
     pairs = [(q, a) for q, a in pairs if q.strip() and a.strip()]
+    if clean:
+        before = len(pairs)
+        pairs = [(q, a) for q, a in pairs if not IDENTITY_LEAK.search(a)]
+        print(f"{name}: {before - len(pairs)} answers removed (they describe another assistant's identity)")
     prompts = tok.encode_batch([format_prompt(q) for q, _ in pairs])
     answers = tok.encode_batch([" " + a.strip() for _, a in pairs])
     kept = [
@@ -102,7 +113,7 @@ def sft(epochs=3, base=None, resume=False):
     extra = encode_pairs(
         "identity and arithmetic",
         identity_pairs(round(n_params / 1e6), repeat=IDENTITY_REPEAT) + arithmetic_pairs(),
-        tok, eos, cfg.ctx,
+        tok, eos, cfg.ctx, clean=False,
     )
     train = train + extra
     print(f"{len(train)} train examples, {len(val)} validation examples")
