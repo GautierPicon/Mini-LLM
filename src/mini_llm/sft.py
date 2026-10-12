@@ -206,11 +206,13 @@ def sft(epochs=3, base=None, resume=False):
                 kind="assistant", step=step, epoch=ep + 1, total_steps=total, val_loss=val_loss,
             )
             print(f"   best so far, saved -> {out_path.name}")
-        save_checkpoint(
-            state_path, model, cfg,
-            kind="assistant", step=step, epoch=ep + 1, total_steps=total,
-            val_loss=val_loss, best_val=best, optimizer=opt.state_dict(),
-        )
+        if ep + 1 < epochs:
+            save_checkpoint(
+                state_path, model, cfg,
+                kind="assistant", step=step, epoch=ep + 1, total_steps=total,
+                val_loss=val_loss, best_val=best, optimizer=opt.state_dict(),
+            )
+    state_path.unlink(missing_ok=True)
 
 
 def main():

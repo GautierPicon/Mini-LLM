@@ -130,6 +130,7 @@ def pretrain(steps=5000, resume=False, init=None):
         weights_path, model, cfg,
         kind="base", step=steps, total_steps=steps, val_loss=val_loss, phase_start=phase_start,
     )
+    state_path.unlink(missing_ok=True)
     print(f"done -> {weights_path.name}")
 
 

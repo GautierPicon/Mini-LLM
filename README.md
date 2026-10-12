@@ -1,4 +1,4 @@
-# Mini-LLM
+# mini-llm
 
 A small ~34M-parameter assistant trained **entirely from scratch** with PyTorch: no pretrained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pretraining, supervised fine-tuning into an assistant, and chat.
 
@@ -27,7 +27,7 @@ Everything lives in `Cfg`, in `src/mini_llm/config.py`.
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```
-git clone https://github.com/GautierPicon/Mini-LLM
+git clone <repo-url>
 cd mini-llm
 uv sync
 ```
@@ -101,14 +101,14 @@ mini-llm/
 
 ## Checkpoints
 
-| File                                             | Content                                                    |
-| ------------------------------------------------ | ---------------------------------------------------------- |
-| `models/tok.json`                                | The tokenizer (16,384 tokens)                              |
-| `models/mini-llm-base-34M-<steps>steps.pt`       | Base model, written once pretraining is complete           |
-| `models/mini-llm-base-34M-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps |
-| `models/mini-llm-assistant-34M.pt`               | Best assistant so far, by validation loss                  |
-| `models/mini-llm-assistant-34M.state.pt`         | Resume state of the SFT run                                |
-| `data/train.bin`, `data/val.bin`                 | Training data, already converted to tokens                 |
+| File                                             | Content                                                                                       |
+| ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `models/tok.json`                                | The tokenizer (16,384 tokens)                                                                 |
+| `models/mini-llm-base-34M-<steps>steps.pt`       | Base model, written once pretraining is complete                                              |
+| `models/mini-llm-base-34M-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps and deleted when the run completes |
+| `models/mini-llm-assistant-34M.pt`               | Best assistant so far, by validation loss                                                     |
+| `models/mini-llm-assistant-34M.state.pt`         | Resume state of the SFT run, deleted when the run completes                                   |
+| `data/train.bin`, `data/val.bin`                 | Training data, already converted to tokens                                                    |
 
 Every checkpoint stores its weights, its configuration and metadata (`step`, `total_steps`, `val_loss`).
 
@@ -170,4 +170,3 @@ Things to keep in mind when changing the code:
 - `prep.py` ends with `os._exit(0)` on purpose: the Hugging Face streaming workers can keep the interpreter from exiting after the data is written. The files are already closed at that point.
 - SFT masks the prompt (labels set to `-100`) and pads with the `<eos>` id, because the tokenizer only defines `<eos>` as a special token. Padded positions carry no loss.
 - `*.pt`, `*.bin` and `data/` are ignored by Git, and `models/tok.json` is tracked. Do not `git add -f` model files.
-
