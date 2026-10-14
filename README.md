@@ -79,6 +79,22 @@ caffeinate -i uv run sft 3
 
 Because the data mix changes, `val.bin` changes too: validation losses from before and after are not directly comparable.
 
+### Training on a cloud GPU
+
+On a RunPod pod with a persistent volume on `/workspace`:
+
+```
+cloud/run.sh setup
+cloud/run.sh prep    # 1500M tokens, background
+cloud/run.sh smoke   # 100-step check, note the tok/s
+cloud/run.sh train   # 22,000 steps, background, adds --resume automatically
+cloud/run.sh sft
+cloud/run.sh status
+cloud/run.sh pack
+```
+
+`--resume` from an old 34M `.state.pt` is no longer compatible (the optimizer now uses two parameter groups with different weight decay).
+
 ## Project layout
 
 ```
