@@ -13,4 +13,6 @@ wheels/
 
 *.bin
 *.pt
+*.safetensors
 data/
+exports/
