@@ -49,10 +49,30 @@ uv run chat
 | `uv run pretrain [steps] [--resume] [--init checkpoint]` | Pretraining: learn to predict the next token                                  | ~3.3 s per step (6000 steps ≈ 5 h 30) |
 | `uv run sft [epochs] [base] [--resume]`                  | Supervised fine-tuning on question/answer pairs                               | ~25 min per epoch                     |
 | `uv run chat [checkpoint]`                               | Chat with the assistant (Ctrl+C to quit)                                      |                                       |
+| `uv run export [checkpoint] [--out dir]`               | Exports a checkpoint to Hugging Face format (`config.json` + `model.safetensors` + tokenizer) | seconds |
 
 `caffeinate -i` (macOS) keeps the Mac awake during training. Keep it plugged in.
 
 To check that everything works before a long run: `uv run pretrain 300`, then `uv run sft 1`.
+
+### Exporting to Hugging Face format
+
+Training checkpoints (`.pt`, pickle) stay as-is: they carry optimizer state for `--resume`. `export` converts the finished weights to the deployable convention, with zero logit difference (checked automatically, `max abs diff` must be `< 1e-5` before and after a `from_pretrained` reload):
+
+```
+uv run export mini-llm-base-34M-12000steps.pt
+uv run export mini-llm-assistant-34M.pt
+```
+
+Each output directory is self-contained and Hub-ready: `config.json`, `model.safetensors` (tied `head` deduplicated), `tokenizer.json` + `tokenizer_config.json` (+ `chat_template.jinja` matching the `User:/Assistant:` training format), `generation_config.json` (same sampling as `chat.py`), plus `configuration_mini_llm.py` / `modeling_mini_llm.py` for `trust_remote_code`:
+
+```python
+from transformers import AutoModelForCausalLM, AutoTokenizer
+tok = AutoTokenizer.from_pretrained("exports/mini-llm-assistant-34M-hf", trust_remote_code=True)
+model = AutoModelForCausalLM.from_pretrained("exports/mini-llm-assistant-34M-hf", trust_remote_code=True)
+```
+
+Upload with `huggingface-cli upload <org>/<repo> exports/<name>-hf .`. `exports/` and `*.safetensors` are ignored by Git; `uv run pytest` covers the native/HF parity.
 
 ### Resuming a run
 
@@ -112,7 +132,10 @@ mini-llm/
         ├── pretrain.py    pretraining
         ├── sft.py         fine-tuning into an assistant
         ├── chat.py        chat interface
-        └── checkpoints.py saving, loading and selecting checkpoints
+        ├── checkpoints.py saving, loading and selecting checkpoints
+        ├── configuration_mini_llm.py  HF config (deploys as config.json)
+        ├── modeling_mini_llm.py       HF model, same math as model.py (deploys as model.safetensors)
+        └── export.py      .pt -> HF directory (config + safetensors + tokenizer)
 ```
 
 ## Checkpoints
@@ -185,4 +208,5 @@ Things to keep in mind when changing the code:
 - Checkpoints are loaded with `weights_only=True`. Only legacy checkpoints that pickled the `Cfg` object itself fall back to unrestricted loading. Never load a `.pt` file from an untrusted source.
 - `prep.py` ends with `os._exit(0)` on purpose: the Hugging Face streaming workers can keep the interpreter from exiting after the data is written. The files are already closed at that point.
 - SFT masks the prompt (labels set to `-100`) and pads with the `<eos>` id, because the tokenizer only defines `<eos>` as a special token. Padded positions carry no loss.
-- `*.pt`, `*.bin` and `data/` are ignored by Git, and `models/tok.json` is tracked. Do not `git add -f` model files.
+- `*.pt`, `*.safetensors`, `*.bin`, `data/` and `exports/` are ignored by Git, and `models/tok.json` is tracked. Do not `git add -f` model files.
+- `model.py` (training) and `modeling_mini_llm.py` (HF deploy) implement the same math; `tests/test_hf_export.py` checks logit parity. Change both together. The native RoPE buffers are non-persistent, the HF ones persistent (transformers' loader needs them in `model.safetensors`).
