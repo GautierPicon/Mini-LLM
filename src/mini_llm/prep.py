@@ -1,6 +1,9 @@
 import os
+import queue
 import random
 import sys
+import threading
+import time
 
 import numpy as np
 from datasets import load_dataset
@@ -49,6 +52,29 @@ def batches(items, size):
         yield buf
 
 
+def prefetch(items, size=8):
+    q = queue.Queue(maxsize=size)
+    done = object()
+
+    def run():
+        try:
+            for it in items:
+                q.put(it)
+        except BaseException as e:
+            q.put(e)
+        finally:
+            q.put(done)
+
+    threading.Thread(target=run, daemon=True).start()
+    while True:
+        it = q.get()
+        if it is done:
+            return
+        if isinstance(it, BaseException):
+            raise it
+        yield it
+
+
 def train_tokenizer(cfg):
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
@@ -78,13 +104,28 @@ def prep(target_millions=120):
     written = 0
     names = ", ".join(f"{name} ({w:.0%})" for name, _, w in SOURCES)
     print(f"Tokenizing {names} (target: {target / 1e6:.0f}M tokens)...")
+    t0 = time.time()
+    nb = 0
     with open(DATA_DIR / "val.bin", "wb") as val_f, open(DATA_DIR / "train.bin", "wb") as train_f:
-        for batch in batches(texts(), BATCH):
+        for batch in batches(prefetch(texts()), BATCH):
+            nb += 1
+            val_ids, train_ids = [], []
             for enc in tok.encode_batch(batch):
-                arr = np.array(enc.ids + [eos], dtype=np.uint16)
-                arr.tofile(val_f if written < VAL_TOKENS else train_f)
-                written += len(arr)
-            print(f"  {written / 1e6:.1f}M tokens", flush=True)
+                ids = enc.ids + [eos]
+                if written < VAL_TOKENS:
+                    val_ids.extend(ids)
+                else:
+                    train_ids.extend(ids)
+                written += len(ids)
+            if val_ids:
+                np.asarray(val_ids, dtype=np.uint16).tofile(val_f)
+            if train_ids:
+                np.asarray(train_ids, dtype=np.uint16).tofile(train_f)
+            if nb % 20 == 0:
+                el = max(1e-6, time.time() - t0)
+                rate = written / el / 1e6
+                eta = max(0, target - written) / max(1e-6, rate * 1e6) / 60
+                print(f"  {written / 1e6:.1f}M / {target / 1e6:.0f}M tokens | {rate:.2f}M tok/s | ETA {eta:.1f}min", flush=True)
             if written >= target:
                 break
     print("Done.")
