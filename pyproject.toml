@@ -9,9 +9,12 @@ authors = [
 requires-python = ">=3.11"
 dependencies = [
     "datasets>=5.1.0",
+    "huggingface-hub>=0.23",
     "numpy>=2.4.6",
+    "safetensors>=0.4",
     "tokenizers>=0.23.3",
     "torch>=2.14.1",
+    "transformers>=4.40",
 ]
 
 [project.scripts]
@@ -19,7 +22,16 @@ prep = "mini_llm.prep:main"
 pretrain = "mini_llm.pretrain:main"
 sft = "mini_llm.sft:main"
 chat = "mini_llm.chat:main"
+export = "mini_llm.export:main"
 
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+]
