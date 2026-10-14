@@ -25,3 +25,13 @@ def get_device():
     if torch.backends.mps.is_available():
         return "mps"
     return "cpu"
+
+
+PRESETS = {"34M": Cfg(), "70M": Cfg(dim=640, layers=12, heads=10, ffn=1728)}
+
+
+def get_preset(name):
+    try:
+        return PRESETS[name]
+    except KeyError:
+        raise SystemExit(f"Unknown size {name!r}, expected one of: {', '.join(sorted(PRESETS))}")
