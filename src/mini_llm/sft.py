@@ -4,6 +4,7 @@ import random
 import re
 import sys
 import time
+from contextlib import nullcontext
 
 import torch
 from datasets import load_dataset
@@ -130,11 +131,12 @@ def sft(epochs=3, base=None, resume=False):
         y = torch.tensor([y + [-100] * (n - len(y)) for y in ys])
         return x.to(dev), y.to(dev)
 
-    bs, accum = 2, 8
+    bs, accum = (8, 2) if dev == "cuda" else (2, 8)
     per_epoch = len(train) // (bs * accum)
     total = per_epoch * epochs
     lr_max, lr_min, warmup = 2e-4, 2e-5, 50
     opt = torch.optim.AdamW(model.parameters(), lr=lr_max, betas=(0.9, 0.95), weight_decay=0.01)
+    amp = torch.autocast("cuda", dtype=torch.bfloat16) if dev == "cuda" else nullcontext()
 
     def lr_at(s):
         if s < warmup:
@@ -148,7 +150,8 @@ def sft(epochs=3, base=None, resume=False):
         losses = []
         for k in range(0, len(val), bs):
             x, y = make_batch(val[k : k + bs])
-            losses.append(model(x, y)[1].item())
+            with amp:
+                losses.append(model(x, y)[1].item())
         model.train()
         if dev == "mps":
             torch.mps.empty_cache()
@@ -183,7 +186,8 @@ def sft(epochs=3, base=None, resume=False):
             for j in range(accum):
                 k = (i * accum + j) * bs
                 x, y = make_batch(train[k : k + bs])
-                loss = model(x, y)[1] / accum
+                with amp:
+                    loss = model(x, y)[1] / accum
                 loss.backward()
                 step_loss += loss.item()
             gnorm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
