@@ -16,7 +16,7 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import get_device
+from mini_llm.config import resolve_device
 from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import format_prompt
 
@@ -98,8 +98,8 @@ def load_examples(tok, eos, ctx):
     return human + ai
 
 
-def sft(epochs=3, base=None, resume=False):
-    dev = get_device()
+def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
+    dev = resolve_device(device)
     base = resolve_checkpoint(base)
     print(f"base: {base.name} | device: {dev}")
     model, cfg = load_model(base, dev)
@@ -131,7 +131,10 @@ def sft(epochs=3, base=None, resume=False):
         y = torch.tensor([y + [-100] * (n - len(y)) for y in ys])
         return x.to(dev), y.to(dev)
 
-    bs, accum = (8, 2) if dev == "cuda" else (2, 8)
+    dbs, dacc = (8, 2) if dev == "cuda" else (2, 8)
+    # Documented OOM fallback for 153M on CUDA: --bs 4 --accum 4.
+    bs = dbs if bs is None else bs
+    accum = dacc if accum is None else accum
     per_epoch = len(train) // (bs * accum)
     total = per_epoch * epochs
     lr_max, lr_min, warmup = 2e-4, 2e-5, 50
@@ -153,8 +156,6 @@ def sft(epochs=3, base=None, resume=False):
             with amp:
                 losses.append(model(x, y)[1].item())
         model.train()
-        if dev == "mps":
-            torch.mps.empty_cache()
         return sum(losses) / len(losses)
 
     out_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.pt"
@@ -196,8 +197,6 @@ def sft(epochs=3, base=None, resume=False):
                 return
             opt.step()
             opt.zero_grad(set_to_none=True)
-            if dev == "mps":
-                torch.mps.empty_cache()
             if step % 25 == 0:
                 print(f"epoch {ep + 1}/{epochs} | step {step:4d}/{total} | loss {step_loss:.3f} | {time.time() - t0:.0f}s")
             step += 1
@@ -224,8 +223,11 @@ def main():
     ap.add_argument("epochs", type=int, nargs="?", default=3)
     ap.add_argument("base", nargs="?")
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--bs", type=int, default=None)
+    ap.add_argument("--accum", type=int, default=None)
     args = ap.parse_args()
-    sft(args.epochs, args.base, args.resume)
+    sft(args.epochs, args.base, args.resume, args.device, args.bs, args.accum)
 
 
 if __name__ == "__main__":

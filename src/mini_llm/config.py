@@ -22,12 +22,24 @@ class Cfg:
 def get_device():
     if torch.cuda.is_available():
         return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
     return "cpu"
 
 
-PRESETS = {"34M": Cfg(), "70M": Cfg(dim=640, layers=12, heads=10, ffn=1728)}
+def resolve_device(name):
+    if name is None or name == "auto":
+        return get_device()
+    if name not in ("cuda", "cpu"):
+        raise SystemExit(f"Unknown device {name!r}, expected one of: auto, cuda, cpu")
+    if name == "cuda" and not torch.cuda.is_available():
+        raise SystemExit("CUDA requested (--device cuda) but no GPU is available")
+    return name
+
+
+PRESETS = {
+    "34M": Cfg(),
+    "70M": Cfg(dim=640, layers=12, heads=10, ffn=1728),
+    "153M": Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768),
+}
 
 
 def get_preset(name):
