@@ -69,3 +69,21 @@ def test_labels_match_native_loss():
         _, ref_loss = native(x, y)
         got_loss = hf(input_ids=x, labels=y).loss
     assert abs(ref_loss.item() - got_loss.item()) < 1e-5
+
+
+def test_logits_match_native_large_vocab():
+    # Export path with a 32k vocab (153M preset): same math, wider head.
+    torch.manual_seed(3)
+    cfg = Cfg(vocab=32768, dim=32, layers=2, heads=4, ffn=64, ctx=32)
+    native = LLM(cfg).eval()
+    hf = MiniLlmForCausalLM(MiniLlmConfig.from_cfg(cfg)).eval()
+    missing, unexpected = hf.load_state_dict(native.state_dict(), strict=False)
+    assert not unexpected
+    assert set(missing) <= {"head.weight", "cos", "sin"}
+    hf.tie_weights()
+    x = torch.randint(0, cfg.vocab, (2, 16))
+    with torch.no_grad():
+        ref, _ = native(x)
+        got = hf(input_ids=x).logits
+    assert torch.isfinite(got).all()
+    assert (ref.float() - got.float()).abs().max().item() < 1e-5

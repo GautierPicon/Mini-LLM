@@ -10,15 +10,15 @@ Training runs on NVIDIA GPUs (CUDA).
 
 Llama-style decoder: RMSNorm, RoPE (rotary position embeddings), causal attention, SwiGLU feed-forward, and an embedding matrix shared with the output head.
 
-| Setting                   | 34M        | 70M        |
-| ------------------------- | ---------- | ---------- |
-| Parameters                | 34,087,424 | 69,975,680 |
-| `dim` (width)             | 512        | 640        |
-| `layers` (depth)          | 8          | 12         |
-| `heads` (attention heads) | 8          | 10         |
-| `ffn` (feed-forward size) | 1408       | 1728       |
-| Vocabulary (BPE)          | 16,384     | 16,384     |
-| Context length            | 512 tokens | 512 tokens |
+| Setting                   | 34M        | 70M        | 153M       |
+| ------------------------- | ---------- | ---------- | ---------- |
+| Parameters                | 34,087,424 | 69,975,680 | 152,596,224 |
+| `dim` (width)             | 512        | 640        | 768        |
+| `layers` (depth)          | 8          | 12         | 18         |
+| `heads` (attention heads) | 8          | 10         | 12         |
+| `ffn` (feed-forward size) | 1408       | 1728       | 2048       |
+| Vocabulary (BPE)          | 16,384     | 16,384     | 32,768     |
+| Context length            | 512 tokens | 512 tokens | 512 tokens |
 
 Everything lives in `Cfg` (`PRESETS` in `src/mini_llm/config.py`).
 
@@ -115,19 +115,28 @@ Because the data mix changes, `val.bin` changes too: validation losses from befo
 
 ### Training on a cloud GPU
 
-This is the recommended path for any real training run. On a RunPod pod with a persistent volume on `/workspace`:
+This is the only supported path for training runs. On a RunPod pod with a persistent volume on `/workspace` (defaults: 153M preset, 34,332 steps, 4600M tokens):
 
 ```
 cloud/run.sh setup
-cloud/run.sh prep    # 1500M tokens, background
+cloud/run.sh prep    # 4600M tokens, background
 cloud/run.sh smoke   # 100-step check, note the tok/s
-cloud/run.sh train   # 22,000 steps, background, adds --resume automatically
-cloud/run.sh sft
+cloud/run.sh train   # 34,332 steps, background, adds --resume automatically
+cloud/run.sh sft     # 2 epochs
 cloud/run.sh status
 cloud/run.sh pack
 ```
 
 `--resume` from an old 34M `.state.pt` is no longer compatible (the optimizer now uses two parameter groups with different weight decay).
+
+### Training a 153M model
+
+Preset `153M` (`Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768)`, 152,596,224 parameters, embeddings shared): the 34M/70M presets are unchanged and their checkpoints still load with the 16k tokenizer.
+
+- **Tokenizer (32k).** `models/tok.json` at the repo root is the 32k BPE, trained by `prep` (`--vocab 32768`, 300k documents, same normalizer/pre-tokenizer/`<eos>` as 16k). The old 16k lineage lives in `models/16k/` (`tok.json` + 34M/70M checkpoints); every checkpoint reads the `tok.json` next to it, so old models keep working.
+- **Data budget.** 34,332 steps × 131,072 tokens/step ≈ 4.5B tokens (~29 tokens/param, ≤1 pass over `train.bin`). `prep` writes `data/meta.json` (`vocab`, tokenizer hash, train/val token counts); keep it next to the `.bin` files. `pretrain` aborts if the vocab or tokenizer hash does not match.
+- **Run.** Everything goes through `cloud/run.sh` above. `sft` does 2 epochs (the 70M overfit at epoch 3). `pack` archives `models/tok.json`, the final 153M base + assistant and `data/meta.json` (milestones excluded, `.state.pt` excluded).
+- **Comparing across tokenizers.** Val losses of the 16k and 32k lineages are **not comparable** (predicting among 32k tokens is a different task). Compare with bits per byte instead — see `mini-eval`, `wikitext` column.
 
 ## Project layout
 
@@ -156,12 +165,13 @@ mini-llm/
 
 | File                                             | Content                                                                                       |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `models/tok.json`                                | The tokenizer (16,384 tokens)                                                                 |
+| `models/tok.json`                                | The tokenizer of the current lineage (32,768 tokens for 153M)                                 |
+| `models/16k/tok.json`                            | The previous 16,384-token tokenizer, next to the 34M/70M checkpoints                           |
 | `models/mini-llm-base-<size>-<steps>steps.pt`    | Base model, written once pretraining is complete (`34M-12000steps`, `70M-22000steps`)         |
 | `models/mini-llm-base-<size>-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps and deleted when the run completes |
 | `models/mini-llm-assistant-<size>.pt`            | Best assistant so far, by validation loss (`assistant-34M`, `assistant-70M`)                  |
 | `models/mini-llm-assistant-<size>.state.pt`      | Resume state of the SFT run, deleted when the run completes                                   |
-| `data/train.bin`, `data/val.bin`                 | Training data, already converted to tokens                                                    |
+| `data/train.bin`, `data/val.bin`, `data/meta.json` | Training data, already converted to tokens, plus vocab/tokenizer provenance                  |
 
 Every checkpoint stores its weights, its configuration and metadata (`step`, `total_steps`, `val_loss`).
 

@@ -7,8 +7,15 @@ from contextlib import nullcontext
 import numpy as np
 import torch
 
-from mini_llm.checkpoints import cfg_from, rank, read_checkpoint, resolve_checkpoint, save_checkpoint
-from mini_llm.config import DATA_DIR, MODELS_DIR, get_device, get_preset
+from mini_llm.checkpoints import (
+    cfg_from,
+    rank,
+    read_checkpoint,
+    resolve_checkpoint,
+    save_checkpoint,
+    sha256_file,
+)
+from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, get_preset, resolve_device
 from mini_llm.model import LLM
 
 DATA_SEED = 1234
@@ -17,33 +24,75 @@ EVAL_WINDOWS = 1024
 HPARAMS = {
     "34M": {"lr_max": 5e-4, "lr_cont": 3e-4, "lr_min": 5e-5, "warmup": 200},
     "70M": {"lr_max": 6e-4, "lr_cont": 3e-4, "lr_min": 6e-5, "warmup": 500},
+    "153M": {"lr_max": 5e-4, "lr_cont": 3e-4, "lr_min": 5e-5, "warmup": 1000},
 }
 
 
-def default_batch(dev):
-    if dev == "mps":
-        return 4, 8
+def default_batch(dev, size="34M"):
     if dev == "cuda":
         try:
             total = torch.cuda.get_device_properties(0).total_memory
             if total >= 40 * 1024**3:
-                return 64, 2
+                return (64, 4) if size == "153M" else (64, 2)
         except Exception:
             pass
-        return 32, 4
+        # Smaller CUDA GPUs, and documented OOM fallback for 153M on 80 GB:
+        # batch=32, accum=8 keeps the same effective batch as (64, 4).
+        return (32, 8) if size == "153M" else (32, 4)
     return 32, 4
 
 
+def check_data_matches(meta_path, cfg, tokenizer_path=None):
+    """Abort if tokenized data was made for another vocab/tokenizer.
+
+    Old data directories have no meta.json: fall back to scanning the
+    maximum token id, and only warn when everything fits.
+    """
+    import json
+
+    if tokenizer_path is None:
+        tokenizer_path = TOKENIZER_PATH
+    if not meta_path.exists():
+        print("warning: no data/meta.json (data predates vocab tracking)")
+        return
+    meta = json.loads(meta_path.read_text())
+    if meta.get("vocab") != cfg.vocab:
+        raise SystemExit(
+            f"data/meta.json has vocab={meta.get('vocab')} but the {cfg.vocab} preset needs vocab={cfg.vocab}. "
+            "Regenerate data/ with prep, or pick the matching --size."
+        )
+    if not tokenizer_path.exists():
+        raise SystemExit(f"Tokenizer missing: {tokenizer_path}")
+    actual = sha256_file(tokenizer_path)
+    if meta.get("tokenizer_sha256") != actual:
+        raise SystemExit(
+            f"data/meta.json tokenizer {meta.get('tokenizer_sha256')} does not match {tokenizer_path} ({actual}). "
+            "Regenerate data/ with prep, or restore the matching tok.json."
+        )
+
+
+def check_ids_fit(train, val, cfg):
+    top = max(int(train.max()), int(val.max())) if len(train) and len(val) else -1
+    if top >= cfg.vocab:
+        raise SystemExit(
+            f"data contains token id {top} but the preset needs vocab={cfg.vocab}. "
+            "Regenerate data/ with prep, or pick the matching --size."
+        )
+
+
 def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=None, lr=None,
-             save_every=1000, milestone_every=5000):
+             save_every=None, milestone_every=None, device="auto"):
     cfg = get_preset(size)
     hp = HPARAMS[size]
     lr_max, lr_cont, lr_min, warmup = hp["lr_max"], hp["lr_cont"], hp["lr_min"], hp["warmup"]
-    dev = get_device()
-    print("device:", dev)
+    dev = resolve_device(device)
     if dev == "cuda":
         torch.set_float32_matmul_precision("high")
-    db, da = default_batch(dev)
+    if save_every is None:
+        save_every = 1000
+    if milestone_every is None:
+        milestone_every = 10000 if size == "153M" else 5000
+    db, da = default_batch(dev, size)
     batch = db if batch is None else batch
     accum = da if accum is None else accum
 
@@ -52,6 +101,9 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
         for s in ("train", "val")
     }
     train, val = data["train"], data["val"]
+    check_data_matches(DATA_DIR / "meta.json", cfg)
+    if not (DATA_DIR / "meta.json").exists():
+        check_ids_fit(train, val, cfg)
     n_win = (len(train) - 1) // cfg.ctx
     if n_win <= 0:
         sys.exit(f"train.bin too small ({len(train)} tokens) for ctx {cfg.ctx}")
@@ -62,6 +114,7 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
     stem = f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps"
     weights_path = MODELS_DIR / f"{stem}.pt"
     state_path = MODELS_DIR / f"{stem}.state.pt"
+    print(f"device: {dev}")
     print(f"{n_params / 1e6:.1f}M parameters -> {weights_path.name}")
 
     decay, nodecay = [], []
@@ -240,11 +293,12 @@ def main():
     ap.add_argument("--batch", type=int, default=None)
     ap.add_argument("--accum", type=int, default=None)
     ap.add_argument("--lr", type=float, default=None)
-    ap.add_argument("--save-every", type=int, default=1000)
-    ap.add_argument("--milestone-every", type=int, default=5000)
+    ap.add_argument("--device", default="auto")
+    ap.add_argument("--save-every", type=int, default=None)
+    ap.add_argument("--milestone-every", type=int, default=None)
     args = ap.parse_args()
     pretrain(args.steps, args.resume, args.init, args.size, args.batch, args.accum, args.lr,
-             args.save_every, args.milestone_every)
+             args.save_every, args.milestone_every, args.device)
 
 
 if __name__ == "__main__":
