@@ -1,26 +1,37 @@
-# mini-llm
+# Mini-LLM
 
-A small ~34M-parameter assistant trained **entirely from scratch** with PyTorch: no pretrained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pretraining, supervised fine-tuning into an assistant, and chat.
+Small assistants (~34M and ~70M parameters) trained **entirely from scratch** with PyTorch: no pretrained weights, no existing model. The project covers the whole chain: tokenizer, data, architecture, pretraining, supervised fine-tuning into an assistant, and chat.
 
-Built for Apple Silicon Macs (GPU through MPS). It also runs on NVIDIA GPUs (CUDA) and on CPU (very slow).
+Training runs on NVIDIA GPUs (CUDA).
 
-> With 34M parameters and ~100M training tokens, the assistant writes coherent sentences in the right format, but it often gets facts wrong.
+> With 34M parameters and ~100M training tokens, the assistant writes coherent sentences in the right format, but it often gets facts wrong. The 70M model trained on ~1.44B tokens (cloud GPU) lowers base val loss from 3.618 to 3.030: answers are more fluent and better formatted, but factual errors and hallucinations remain.
 
 ## Model
 
 Llama-style decoder: RMSNorm, RoPE (rotary position embeddings), causal attention, SwiGLU feed-forward, and an embedding matrix shared with the output head.
 
-| Setting                   | Value      |
-| ------------------------- | ---------- |
-| Parameters                | ~34M       |
-| `dim` (width)             | 512        |
-| `layers` (depth)          | 8          |
-| `heads` (attention heads) | 8          |
-| `ffn` (feed-forward size) | 1408       |
-| Vocabulary (BPE)          | 16,384     |
-| Context length            | 512 tokens |
+| Setting                   | 34M        | 70M        |
+| ------------------------- | ---------- | ---------- |
+| Parameters                | 34,087,424 | 69,975,680 |
+| `dim` (width)             | 512        | 640        |
+| `layers` (depth)          | 8          | 12         |
+| `heads` (attention heads) | 8          | 10         |
+| `ffn` (feed-forward size) | 1408       | 1728       |
+| Vocabulary (BPE)          | 16,384     | 16,384     |
+| Context length            | 512 tokens | 512 tokens |
 
-Everything lives in `Cfg`, in `src/mini_llm/config.py`.
+Everything lives in `Cfg` (`PRESETS` in `src/mini_llm/config.py`).
+
+Trained checkpoints in `models/`:
+
+| Checkpoint                              | Steps | Tokens seen | Val loss |
+| --------------------------------------- | ----- | ----------- | -------- |
+| `mini-llm-base-34M-12000steps.pt`       | 12000 | ~0.20B      | 3.618    |
+| `mini-llm-base-70M-22000steps.pt`       | 22000 | ~1.44B      | 3.030    |
+| `mini-llm-assistant-34M.pt` (epoch 3)   | 5598  | SFT         | 3.194    |
+| `mini-llm-assistant-70M.pt` (epoch 2/3) | 3800  | SFT         | 2.718    |
+
+The 70M base was trained on the cloud (`cloud/run.sh`: `SIZE=70M`, `STEPS=22000`, `PREP_MILLIONS=1500`, CUDA batch `32x4x512`, so `65536` tokens/step). The 34M-12000steps model is a continued run (`--init` from 6000 steps, `phase_start=6000`), so its `val.bin` differs: base val losses are not directly comparable across data mixes.
 
 ## Setup
 
@@ -32,26 +43,27 @@ cd mini-llm
 uv sync
 ```
 
+To speed up Hugging Face downloads, create a free token and export it before running `prep` or `sft`: `export HF_TOKEN=...`.
+
 ## Usage
 
-The pipeline has four steps, run in this order.
+The pipeline has four steps, run in this order on a cloud GPU
+(see `Training on a cloud GPU` below).
 
 ```
 uv run prep
-caffeinate -i uv run pretrain 6000
-caffeinate -i uv run sft 3
+uv run pretrain 300
+uv run sft 1
 uv run chat
 ```
 
-| Command                                                  | What it does                                                                  | Rough duration (MacBook Air M2)       |
-| -------------------------------------------------------- | ----------------------------------------------------------------------------- | ------------------------------------- |
-| `uv run prep [millions]`                                 | Trains the tokenizer (if missing) and tokenizes a FineWeb-Edu + Wikipedia mix | 15 to 60 min                          |
-| `uv run pretrain [steps] [--resume] [--init checkpoint]` | Pretraining: learn to predict the next token                                  | ~3.3 s per step (6000 steps ≈ 5 h 30) |
-| `uv run sft [epochs] [base] [--resume]`                  | Supervised fine-tuning on question/answer pairs                               | ~25 min per epoch                     |
+| Command                                                  | What it does                                                                  | Notes                                   |
+| -------------------------------------------------------- | ----------------------------------------------------------------------------- | --------------------------------------- |
+| `uv run prep [millions]`                                 | Trains the tokenizer (if missing) and tokenizes a FineWeb-Edu + Wikipedia mix | Full data via `cloud/run.sh prep`       |
+| `uv run pretrain [steps] [--resume] [--init checkpoint]` | Pretraining: learn to predict the next token                                  | Full run via `cloud/run.sh train`       |
+| `uv run sft [epochs] [base] [--resume]`                  | Supervised fine-tuning on question/answer pairs                               | Full run via `cloud/run.sh sft`         |
 | `uv run chat [checkpoint]`                               | Chat with the assistant (Ctrl+C to quit)                                      |                                       |
 | `uv run export [checkpoint] [--out dir]`               | Exports a checkpoint to Hugging Face format (`config.json` + `model.safetensors` + tokenizer) | seconds |
-
-`caffeinate -i` (macOS) keeps the Mac awake during training. Keep it plugged in.
 
 To check that everything works before a long run: `uv run pretrain 300`, then `uv run sft 1`.
 
@@ -62,6 +74,8 @@ Training checkpoints (`.pt`, pickle) stay as-is: they carry optimizer state for 
 ```
 uv run export mini-llm-base-34M-12000steps.pt
 uv run export mini-llm-assistant-34M.pt
+uv run export mini-llm-base-70M-22000steps.pt
+uv run export mini-llm-assistant-70M.pt
 ```
 
 Each output directory is self-contained and Hub-ready: `config.json`, `model.safetensors` (tied `head` deduplicated), `tokenizer.json` + `tokenizer_config.json` (+ `chat_template.jinja` matching the `User:/Assistant:` training format), `generation_config.json` (same sampling as `chat.py`), plus `configuration_mini_llm.py` / `modeling_mini_llm.py` for `trust_remote_code`:
@@ -91,8 +105,8 @@ A finished base model can be trained further on fresh data instead of starting o
 
 ```
 uv run prep 250
-caffeinate -i uv run pretrain 12000 --init mini-llm-base-34M-6000steps.pt
-caffeinate -i uv run sft 3
+uv run pretrain 12000 --init mini-llm-base-34M-6000steps.pt
+uv run sft 3
 ```
 
 `12000` is the final step count, so this adds 6000 steps. The continued phase uses its own short warmup and a lower peak learning rate (3e-4), and the optimizer starts fresh. The result is saved as `mini-llm-base-34M-12000steps.pt`, which `sft` and `chat` then prefer over the 6000-step model. `--init` and `--resume` cannot be combined, and `--resume` works on a continued run like on any other.
@@ -101,7 +115,7 @@ Because the data mix changes, `val.bin` changes too: validation losses from befo
 
 ### Training on a cloud GPU
 
-On a RunPod pod with a persistent volume on `/workspace`:
+This is the recommended path for any real training run. On a RunPod pod with a persistent volume on `/workspace`:
 
 ```
 cloud/run.sh setup
@@ -143,10 +157,10 @@ mini-llm/
 | File                                             | Content                                                                                       |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `models/tok.json`                                | The tokenizer (16,384 tokens)                                                                 |
-| `models/mini-llm-base-34M-<steps>steps.pt`       | Base model, written once pretraining is complete                                              |
-| `models/mini-llm-base-34M-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps and deleted when the run completes |
-| `models/mini-llm-assistant-34M.pt`               | Best assistant so far, by validation loss                                                     |
-| `models/mini-llm-assistant-34M.state.pt`         | Resume state of the SFT run, deleted when the run completes                                   |
+| `models/mini-llm-base-<size>-<steps>steps.pt`    | Base model, written once pretraining is complete (`34M-12000steps`, `70M-22000steps`)         |
+| `models/mini-llm-base-<size>-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps and deleted when the run completes |
+| `models/mini-llm-assistant-<size>.pt`            | Best assistant so far, by validation loss (`assistant-34M`, `assistant-70M`)                  |
+| `models/mini-llm-assistant-<size>.state.pt`      | Resume state of the SFT run, deleted when the run completes                                   |
 | `data/train.bin`, `data/val.bin`                 | Training data, already converted to tokens                                                    |
 
 Every checkpoint stores its weights, its configuration and metadata (`step`, `total_steps`, `val_loss`).
@@ -186,17 +200,6 @@ The SFT loss is computed on the answer only, not on the question.
 ## Generation settings
 
 `chat.py` samples with a low temperature (0.5), `top_k` 40 and a repetition penalty of 1.15, and stops at the end-of-answer token or after 256 new tokens. The constants at the top of the file can be tuned without retraining anything: a higher temperature makes answers more varied and less reliable, a higher penalty reduces loops but can distort names and numbers.
-
-## Memory settings
-
-If training stops with an `out of memory` error on a Mac:
-
-- `pretrain.py`: change `(4, 8)` to `(2, 16)` in `batch, accum = ...`.
-- `sft.py`: change `bs, accum = 2, 8` to `1, 16`.
-
-The number of examples per optimizer step stays the same, only the memory used at any moment goes down. Closing heavy applications also helps.
-
-To speed up Hugging Face downloads, create a free token and export it before running `prep` or `sft`: `export HF_TOKEN=...`.
 
 ## Design notes
 
