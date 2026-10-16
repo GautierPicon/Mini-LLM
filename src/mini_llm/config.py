@@ -35,10 +35,19 @@ def resolve_device(name):
     return name
 
 
+def size_millions(n_params):
+    """Model size tag in millions: total params rounded to the nearest 10M.
+
+    69,975,680 -> 70, 152,596,224 -> 150. The older 34M checkpoints predate
+    this rule (34,087,424 would give 30) and keep their historical name.
+    """
+    return round(n_params / 1e7) * 10
+
+
 PRESETS = {
     "34M": Cfg(),
     "70M": Cfg(dim=640, layers=12, heads=10, ffn=1728),
-    "153M": Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768),
+    "150M": Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768),
 }
 
 

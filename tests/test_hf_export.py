@@ -72,7 +72,7 @@ def test_labels_match_native_loss():
 
 
 def test_logits_match_native_large_vocab():
-    # Export path with a 32k vocab (153M preset): same math, wider head.
+    # Export path with a 32k vocab (150M preset): same math, wider head.
     torch.manual_seed(3)
     cfg = Cfg(vocab=32768, dim=32, layers=2, heads=4, ffn=64, ctx=32)
     native = LLM(cfg).eval()

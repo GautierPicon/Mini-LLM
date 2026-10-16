@@ -16,7 +16,7 @@ from mini_llm.checkpoints import (
     resolve_checkpoint,
     save_checkpoint,
 )
-from mini_llm.config import resolve_device
+from mini_llm.config import resolve_device, size_millions
 from mini_llm.identity import arithmetic_pairs, identity_pairs
 from mini_llm.prompt import format_prompt
 
@@ -113,7 +113,7 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
     val, train = data[:VAL_SIZE], data[VAL_SIZE:]
     extra = encode_pairs(
         "identity and arithmetic",
-        identity_pairs(round(n_params / 1e6), repeat=IDENTITY_REPEAT) + arithmetic_pairs(),
+        identity_pairs(size_millions(n_params), repeat=IDENTITY_REPEAT) + arithmetic_pairs(),
         tok, eos, cfg.ctx, clean=False,
     )
     train = train + extra
@@ -132,7 +132,7 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
         return x.to(dev), y.to(dev)
 
     dbs, dacc = (8, 2) if dev == "cuda" else (2, 8)
-    # Documented OOM fallback for 153M on CUDA: --bs 4 --accum 4.
+    # Documented OOM fallback for 150M on CUDA: --bs 4 --accum 4.
     bs = dbs if bs is None else bs
     accum = dacc if accum is None else accum
     per_epoch = len(train) // (bs * accum)
@@ -158,8 +158,8 @@ def sft(epochs=3, base=None, resume=False, device="auto", bs=None, accum=None):
         model.train()
         return sum(losses) / len(losses)
 
-    out_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.pt"
-    state_path = base.parent / f"mini-llm-assistant-{n_params / 1e6:.0f}M.state.pt"
+    out_path = base.parent / f"mini-llm-assistant-{size_millions(n_params)}M.pt"
+    state_path = base.parent / f"mini-llm-assistant-{size_millions(n_params)}M.state.pt"
 
     best = float("inf")
     step, start_epoch = 0, 0

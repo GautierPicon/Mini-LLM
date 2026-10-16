@@ -10,7 +10,7 @@ Training runs on NVIDIA GPUs (CUDA).
 
 Llama-style decoder: RMSNorm, RoPE (rotary position embeddings), causal attention, SwiGLU feed-forward, and an embedding matrix shared with the output head.
 
-| Setting                   | 34M        | 70M        | 153M       |
+| Setting                   | 34M        | 70M        | 150M       |
 | ------------------------- | ---------- | ---------- | ---------- |
 | Parameters                | 34,087,424 | 69,975,680 | 152,596,224 |
 | `dim` (width)             | 512        | 640        | 768        |
@@ -115,7 +115,7 @@ Because the data mix changes, `val.bin` changes too: validation losses from befo
 
 ### Training on a cloud GPU
 
-This is the only supported path for training runs. On a RunPod pod with a persistent volume on `/workspace` (defaults: 153M preset, 34,332 steps, 4600M tokens):
+This is the only supported path for training runs. On a RunPod pod with a persistent volume on `/workspace` (defaults: 150M preset, 34,332 steps, 4600M tokens):
 
 ```
 cloud/run.sh setup
@@ -129,13 +129,13 @@ cloud/run.sh pack
 
 `--resume` from an old 34M `.state.pt` is no longer compatible (the optimizer now uses two parameter groups with different weight decay).
 
-### Training a 153M model
+### Training a 150M model
 
-Preset `153M` (`Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768)`, 152,596,224 parameters, embeddings shared): the 34M/70M presets are unchanged and their checkpoints still load with the 16k tokenizer.
+Preset `150M` (`Cfg(dim=768, layers=18, heads=12, ffn=2048, vocab=32768)`, 152,596,224 parameters, embeddings shared): the 34M/70M presets are unchanged and their checkpoints still load with the 16k tokenizer.
 
 - **Tokenizer (32k).** `models/tok.json` at the repo root is the 32k BPE, trained by `prep` (`--vocab 32768`, 300k documents, same normalizer/pre-tokenizer/`<eos>` as 16k). The old 16k lineage lives in `models/16k/` (`tok.json` + 34M/70M checkpoints); every checkpoint reads the `tok.json` next to it, so old models keep working.
 - **Data budget.** 34,332 steps × 131,072 tokens/step ≈ 4.5B tokens (~29 tokens/param, ≤1 pass over `train.bin`). `prep` writes `data/meta.json` (`vocab`, tokenizer hash, train/val token counts); keep it next to the `.bin` files. `pretrain` aborts if the vocab or tokenizer hash does not match.
-- **Run.** Everything goes through `cloud/run.sh` above. `sft` does 2 epochs (the 70M overfit at epoch 3). `pack` archives `models/tok.json`, the final 153M base + assistant and `data/meta.json` (milestones excluded, `.state.pt` excluded).
+- **Run.** Everything goes through `cloud/run.sh` above. `sft` does 2 epochs (the 70M overfit at epoch 3). `pack` archives `models/tok.json`, the final 150M base + assistant and `data/meta.json` (milestones excluded, `.state.pt` excluded).
 - **Comparing across tokenizers.** Val losses of the 16k and 32k lineages are **not comparable** (predicting among 32k tokens is a different task). Compare with bits per byte instead — see `mini-eval`, `wikitext` column.
 
 ## Project layout
@@ -166,7 +166,7 @@ mini-llm/
 
 | File                                             | Content                                                                                       |
 | ------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `models/tok.json`                                | The tokenizer of the current lineage (32,768 tokens for 153M)                                 |
+| `models/tok.json`                                | The tokenizer of the current lineage (32,768 tokens for 150M)                                 |
 | `models/16k/tok.json`                            | The previous 16,384-token tokenizer, next to the 34M/70M checkpoints                           |
 | `models/mini-llm-base-<size>-<steps>steps.pt`    | Base model, written once pretraining is complete (`34M-12000steps`, `70M-22000steps`)         |
 | `models/mini-llm-base-<size>-<steps>steps.state.pt` | Resume state (includes optimizer), updated every 500 steps and deleted when the run completes |

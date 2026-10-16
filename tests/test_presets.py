@@ -4,18 +4,18 @@ import numpy as np
 import pytest
 import torch
 
-from mini_llm.config import Cfg, get_preset, resolve_device
+from mini_llm.config import Cfg, get_preset, resolve_device, size_millions
 from mini_llm.model import LLM
 
 
 def test_preset_param_counts_frozen():
-    # 34M/70M presets must never change; 153M is the new ~152.6M target.
+    # 34M/70M presets must never change; 150M is the new ~152.6M target.
     for name, expected in [("34M", 34_087_424), ("70M", 69_975_680)]:
         m = LLM(get_preset(name))
         assert sum(p.numel() for p in m.parameters()) == expected
         del m
         gc.collect()
-    m = LLM(get_preset("153M"))
+    m = LLM(get_preset("150M"))
     n = sum(p.numel() for p in m.parameters())
     assert m.c.vocab == 32768
     assert 152_000_000 < n < 153_500_000, n
@@ -34,6 +34,11 @@ def test_resolve_device():
         resolve_device("tpu")
     assert resolve_device("auto") in ("cuda", "cpu")
     assert resolve_device(None) in ("cuda", "cpu")
+
+
+def test_size_millions_rounds_to_tens():
+    assert size_millions(69_975_680) == 70
+    assert size_millions(152_596_224) == 150
 
 
 def test_data_vocab_guard(tmp_path):

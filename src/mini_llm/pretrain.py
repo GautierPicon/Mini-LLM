@@ -15,7 +15,7 @@ from mini_llm.checkpoints import (
     save_checkpoint,
     sha256_file,
 )
-from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, get_preset, resolve_device
+from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, get_preset, resolve_device, size_millions
 from mini_llm.model import LLM
 
 DATA_SEED = 1234
@@ -24,7 +24,7 @@ EVAL_WINDOWS = 1024
 HPARAMS = {
     "34M": {"lr_max": 5e-4, "lr_cont": 3e-4, "lr_min": 5e-5, "warmup": 200},
     "70M": {"lr_max": 6e-4, "lr_cont": 3e-4, "lr_min": 6e-5, "warmup": 500},
-    "153M": {"lr_max": 5e-4, "lr_cont": 3e-4, "lr_min": 5e-5, "warmup": 1000},
+    "150M": {"lr_max": 5e-4, "lr_cont": 3e-4, "lr_min": 5e-5, "warmup": 1000},
 }
 
 
@@ -33,12 +33,12 @@ def default_batch(dev, size="34M"):
         try:
             total = torch.cuda.get_device_properties(0).total_memory
             if total >= 40 * 1024**3:
-                return (64, 4) if size == "153M" else (64, 2)
+                return (64, 4) if size == "150M" else (64, 2)
         except Exception:
             pass
-        # Smaller CUDA GPUs, and documented OOM fallback for 153M on 80 GB:
+        # Smaller CUDA GPUs, and documented OOM fallback for 150M on 80 GB:
         # batch=32, accum=8 keeps the same effective batch as (64, 4).
-        return (32, 8) if size == "153M" else (32, 4)
+        return (32, 8) if size == "150M" else (32, 4)
     return 32, 4
 
 
@@ -91,7 +91,7 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
     if save_every is None:
         save_every = 1000
     if milestone_every is None:
-        milestone_every = 10000 if size == "153M" else 5000
+        milestone_every = 10000 if size == "150M" else 5000
     db, da = default_batch(dev, size)
     batch = db if batch is None else batch
     accum = da if accum is None else accum
@@ -111,7 +111,7 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
     model = LLM(cfg).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
-    stem = f"mini-llm-base-{n_params / 1e6:.0f}M-{steps}steps"
+    stem = f"mini-llm-base-{size_millions(n_params)}M-{steps}steps"
     weights_path = MODELS_DIR / f"{stem}.pt"
     state_path = MODELS_DIR / f"{stem}.state.pt"
     print(f"device: {dev}")

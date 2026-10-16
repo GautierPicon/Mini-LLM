@@ -2,14 +2,14 @@
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-SIZE=153M
+SIZE=150M
 STEPS=34332
 PREP_MILLIONS=4600
 # 34332 x 131072 tokens/step = ~4.5B tokens, ~29 tokens/param.
 
 # Expected tokenizer vocab for the current SIZE (16k lineage vs 32k lineage).
 case "$SIZE" in
-  153M) EXPECT_VOCAB=32768 ;;
+  150M) EXPECT_VOCAB=32768 ;;
   *) EXPECT_VOCAB=16384 ;;
 esac
 
@@ -82,8 +82,8 @@ status)
   ;;
 pack)
   files=(models/tok.json data/meta.json)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-base-153M-*.pt' ! -name '*.state.pt' | sort)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-assistant-153M.pt' | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-base-150M-*.pt' ! -name '*.state.pt' | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-assistant-150M.pt' | sort)
   # Milestones (~0.6 GB each) are excluded by default to keep the archive small.
   tar -cf /workspace/export.tar "${files[@]}"
   ls -lh /workspace/export.tar
