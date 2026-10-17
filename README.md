@@ -10,7 +10,7 @@ Training runs on NVIDIA GPUs (CUDA).
 > on ~1.44B tokens (cloud GPU) lowers base val loss from 3.618 to 3.030: answers are
 > more fluent and better formatted, but factual errors and hallucinations remain.
 
-**Full documentation: [../documentation/Mini-LLM](../documentation/Mini-LLM/README.md)**
+**Full documentation: [../Documentation/Mini-LLM](../Documentation/Mini-LLM/README.md)**
 
 ## Quickstart
 
@@ -31,6 +31,6 @@ To speed up Hugging Face downloads, create a free token and export it before run
 `prep` or `sft`: `export HF_TOKEN=...`.
 
 Full training runs go through the cloud GPU workflow — see
-[Cloud GPU](../documentation/Mini-LLM/cloud-gpu.md). Everything else — architecture,
+[Cloud GPU](../Documentation/Mini-LLM/cloud-gpu.md). Everything else — architecture,
 checkpoints, data sources, Hugging Face export, design notes — lives in the
-[documentation](../documentation/Mini-LLM/README.md).
+[documentation](../Documentation/Mini-LLM/README.md).
