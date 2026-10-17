@@ -53,12 +53,12 @@ prep)
   ;;
 smoke)
   uv run pretrain 100 --size "$SIZE" --device cuda --save-every 50 --milestone-every 1000000
-  rm -f models/mini-llm-base-*-100steps*.pt models/milestones/mini-llm-base-*-100steps*.pt
+  rm -f models/*/mini-llm-base-*-100steps*.pt
   echo "smoke done, note the tok/s above"
   ;;
 train)
   args=(uv run pretrain "$STEPS" --size "$SIZE" --device cuda)
-  if compgen -G "models/mini-llm-base-*-${STEPS}steps.state.pt" > /dev/null; then
+  if compgen -G "models/*/mini-llm-base-*-${STEPS}steps.state.pt" > /dev/null; then
     args+=(--resume)
   fi
   setsid nohup "${args[@]}" >"$LOGDIR/train.log" 2>&1 < /dev/null &
@@ -75,16 +75,17 @@ status)
     echo "== $f =="
     tail -5 "$f"
   done
-  echo "== models/ =="; ls -lh models/ || true
-  echo "== models/milestones/ =="; ls -lh models/milestones/ || true
+  echo "== models/ =="; ls -lh models/ models/*/ || true
+  echo "== milestones =="; ls -lh models/*/milestones/ || true
   echo "== data/ =="; ls -lh data/ || true
   df -h /workspace
   ;;
 pack)
-  files=(models/tok.json data/meta.json)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-base-150M-*.pt' ! -name '*.state.pt' | sort)
-  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name 'mini-llm-assistant-150M.pt' | sort)
-  # Milestones (~0.6 GB each) are excluded by default to keep the archive small.
+  TOK="models/$((EXPECT_VOCAB / 1024))k/tok.json"
+  files=("$TOK" data/meta.json)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name "mini-llm-base-${SIZE}-*.pt" ! -name '*.state.pt' ! -name '*.at*.pt' | sort)
+  while IFS= read -r f; do files+=("$f"); done < <(find models -maxdepth 2 -name "mini-llm-assistant-${SIZE}.pt" | sort)
+  # Milestones (~0.6 GB each, under models/<lineage>/milestones/) are excluded by default to keep the archive small.
   tar -cf /workspace/export.tar "${files[@]}"
   ls -lh /workspace/export.tar
   echo "runpodctl send /workspace/export.tar"

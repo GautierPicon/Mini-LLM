@@ -12,7 +12,7 @@ from datasets import load_dataset
 from tokenizers import Tokenizer, decoders, models, pre_tokenizers, trainers
 
 from mini_llm.checkpoints import sha256_file
-from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, Cfg, get_preset
+from mini_llm.config import DATA_DIR, MODELS_DIR, Cfg, get_preset, tokenizer_path
 
 SOURCES = [
     ("HuggingFaceFW/fineweb-edu", "sample-10BT", 0.7),
@@ -85,6 +85,7 @@ def prefetch(items, size=8):
 
 
 def train_tokenizer(vocab, n_docs):
+    path = tokenizer_path(vocab)
     tok = Tokenizer(models.BPE())
     tok.pre_tokenizer = pre_tokenizers.ByteLevel(add_prefix_space=False)
     tok.decoder = decoders.ByteLevel()
@@ -97,7 +98,8 @@ def train_tokenizer(vocab, n_docs):
     docs = (text for _, text in zip(range(n_docs), (t for _, t in texts())))
     tok.train_from_iterator(docs, trainer)
     print(f"tokenizer: vocab={vocab} from {n_docs} docs in {time.time() - t0:.0f}s")
-    tok.save(str(TOKENIZER_PATH))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tok.save(str(path))
 
 
 def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None):
@@ -108,17 +110,18 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None):
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
 
-    if TOKENIZER_PATH.exists():
-        existing = Tokenizer.from_file(str(TOKENIZER_PATH)).get_vocab_size()
+    tok_path = tokenizer_path(vocab)
+    if tok_path.exists():
+        existing = Tokenizer.from_file(str(tok_path)).get_vocab_size()
         if existing != vocab:
             raise SystemExit(
-                f"{TOKENIZER_PATH} has vocab={existing} but --vocab={vocab} was requested. "
-                "Move it aside (e.g. models/16k/tok.json) or drop --vocab."
+                f"{tok_path} has vocab={existing} but --vocab={vocab} was requested. "
+                "Move it aside or drop --vocab."
             )
     else:
         print("Training the BPE tokenizer...")
         train_tokenizer(vocab, tokenizer_docs)
-    tok = Tokenizer.from_file(str(TOKENIZER_PATH))
+    tok = Tokenizer.from_file(str(tok_path))
     eos = tok.token_to_id("<eos>")
 
     target = VAL_TOKENS + int(target_millions * 1_000_000)
@@ -160,7 +163,7 @@ def prep(target_millions=120, size=None, vocab=None, tokenizer_docs=None):
         print(f"warning: source exhausted before target: {src}")
     meta = {
         "vocab": vocab,
-        "tokenizer_sha256": sha256_file(TOKENIZER_PATH),
+        "tokenizer_sha256": sha256_file(tok_path),
         "train_tokens": train_tokens,
         "val_tokens": val_tokens,
         "docs_per_source": docs_per_source,

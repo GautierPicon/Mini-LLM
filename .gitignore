@@ -16,3 +16,4 @@ wheels/
 *.safetensors
 data/
 exports/
+logs/

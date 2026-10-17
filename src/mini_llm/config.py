@@ -6,7 +6,15 @@ import torch
 ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = ROOT / "data"
 MODELS_DIR = ROOT / "models"
-TOKENIZER_PATH = MODELS_DIR / "tok.json"
+
+
+def tokenizer_dir(vocab):
+    """Lineage folder named after the tokenizer vocabulary: models/16k/, models/32k/..."""
+    return MODELS_DIR / f"{vocab // 1024}k"
+
+
+def tokenizer_path(vocab):
+    return tokenizer_dir(vocab) / "tok.json"
 
 
 @dataclass

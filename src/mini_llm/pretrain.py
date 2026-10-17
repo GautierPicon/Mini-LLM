@@ -15,7 +15,14 @@ from mini_llm.checkpoints import (
     save_checkpoint,
     sha256_file,
 )
-from mini_llm.config import DATA_DIR, MODELS_DIR, TOKENIZER_PATH, get_preset, resolve_device, size_millions
+from mini_llm.config import (
+    DATA_DIR,
+    get_preset,
+    resolve_device,
+    size_millions,
+    tokenizer_dir,
+    tokenizer_path,
+)
 from mini_llm.model import LLM
 
 DATA_SEED = 1234
@@ -42,16 +49,18 @@ def default_batch(dev, size="34M"):
     return 32, 4
 
 
-def check_data_matches(meta_path, cfg, tokenizer_path=None):
+def check_data_matches(meta_path, cfg, tok_path=None):
     """Abort if tokenized data was made for another vocab/tokenizer.
 
+    tok_path defaults to the lineage tokenizer of cfg.vocab
+    (models/16k/tok.json, models/32k/tok.json, ...).
     Old data directories have no meta.json: fall back to scanning the
     maximum token id, and only warn when everything fits.
     """
     import json
 
-    if tokenizer_path is None:
-        tokenizer_path = TOKENIZER_PATH
+    if tok_path is None:
+        tok_path = tokenizer_path(cfg.vocab)
     if not meta_path.exists():
         print("warning: no data/meta.json (data predates vocab tracking)")
         return
@@ -61,12 +70,12 @@ def check_data_matches(meta_path, cfg, tokenizer_path=None):
             f"data/meta.json has vocab={meta.get('vocab')} but the {cfg.vocab} preset needs vocab={cfg.vocab}. "
             "Regenerate data/ with prep, or pick the matching --size."
         )
-    if not tokenizer_path.exists():
-        raise SystemExit(f"Tokenizer missing: {tokenizer_path}")
-    actual = sha256_file(tokenizer_path)
+    if not tok_path.exists():
+        raise SystemExit(f"Tokenizer missing: {tok_path}")
+    actual = sha256_file(tok_path)
     if meta.get("tokenizer_sha256") != actual:
         raise SystemExit(
-            f"data/meta.json tokenizer {meta.get('tokenizer_sha256')} does not match {tokenizer_path} ({actual}). "
+            f"data/meta.json tokenizer {meta.get('tokenizer_sha256')} does not match {tok_path} ({actual}). "
             "Regenerate data/ with prep, or restore the matching tok.json."
         )
 
@@ -110,10 +119,11 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
 
     model = LLM(cfg).to(dev)
     n_params = sum(p.numel() for p in model.parameters())
-    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    out_dir = tokenizer_dir(cfg.vocab)
+    out_dir.mkdir(parents=True, exist_ok=True)
     stem = f"mini-llm-base-{size_millions(n_params)}M-{steps}steps"
-    weights_path = MODELS_DIR / f"{stem}.pt"
-    state_path = MODELS_DIR / f"{stem}.state.pt"
+    weights_path = out_dir / f"{stem}.pt"
+    state_path = out_dir / f"{stem}.state.pt"
     print(f"device: {dev}")
     print(f"{n_params / 1e6:.1f}M parameters -> {weights_path.name}")
 
@@ -268,7 +278,7 @@ def pretrain(steps=5000, resume=False, init=None, size="34M", batch=None, accum=
                 phase_start=phase_start, optimizer=opt.state_dict(),
             )
         if done % milestone_every == 0 and done != steps:
-            mile_dir = MODELS_DIR / "milestones"
+            mile_dir = out_dir / "milestones"
             mile_dir.mkdir(parents=True, exist_ok=True)
             save_checkpoint(
                 mile_dir / f"{stem}.at{done}.pt", model, cfg,
