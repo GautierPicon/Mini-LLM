@@ -17,7 +17,7 @@ Training runs on NVIDIA GPUs (CUDA).
 Requires [uv](https://docs.astral.sh/uv/) and Python 3.11+.
 
 ```
-git clone https://github.com/GautierPicon/Mini-LLM
+git clone https://github.com/Mini-llm-lab/Mini-LLM
 cd Mini-LLM
 uv sync
 
